@@ -6,6 +6,7 @@
 
 - **Switch/Case 状态机** (`elib_fsm`): 轻量级状态跟踪器，支持立即/延迟跳转
 - **回调状态机** (`elib_fsm_cb`): 回调驱动型状态机，支持 entry/exit/run 回调调度与延迟跳转
+- **层次状态机** (`elib_fsm_hsm`): HSM 层次状态机，支持父子状态、事件冒泡、LCA 跳转语义
 - 零动态内存分配
 - 用户分配上下文
 - 两种模式完全解耦，可独立或组合使用
@@ -61,6 +62,52 @@ elib_fsm_cb_init(&ctx, states, 2, STATE_IDLE, NULL);
 
 elib_fsm_cb_goto(&ctx, STATE_ACTIVE, 0);  /* exit(IDLE) -> entry(ACTIVE) */
 elib_fsm_cb_poll(&ctx, 10);              /* 10ms tick，自动调用 on_run */
+```
+
+### 层次状态机
+
+定义带层次关系的状态描述符，使用 `elib_fsm_hsm_dispatch()` 投递事件（支持冒泡）：
+
+```c
+#include "elib_fsm_hsm.h"
+
+enum { ST_ROOT, ST_STOPPED, ST_RUNNING, ST_PAUSED, ST_PLAYING };
+enum { EVT_START, EVT_STOP, EVT_PAUSE, EVT_RESUME };
+
+static bool stopped_handler(elib_fsm_event_t evt, void *ud) {
+    if (evt == EVT_START) { elib_fsm_hsm_goto((elib_fsm_hsm_ctx_t*)ud, ST_RUNNING); return true; }
+    return false;
+}
+
+static bool running_handler(elib_fsm_event_t evt, void *ud) {
+    if (evt == EVT_STOP) { elib_fsm_hsm_goto((elib_fsm_hsm_ctx_t*)ud, ST_STOPPED); return true; }
+    return false;
+}
+
+static bool playing_handler(elib_fsm_event_t evt, void *ud) {
+    if (evt == EVT_PAUSE) { elib_fsm_hsm_goto((elib_fsm_hsm_ctx_t*)ud, ST_PAUSED); return true; }
+    return false;
+}
+
+static bool paused_handler(elib_fsm_event_t evt, void *ud) {
+    if (evt == EVT_RESUME) { elib_fsm_hsm_goto((elib_fsm_hsm_ctx_t*)ud, ST_PLAYING); return true; }
+    return false;
+}
+
+static const elib_fsm_hsm_state_desc_t states[] = {
+    { ST_ROOT,    ELIB_FSM_STATE_INVALID, ST_STOPPED, NULL, NULL, NULL, NULL           },
+    { ST_STOPPED, ST_ROOT,   ELIB_FSM_STATE_INVALID, NULL, NULL, NULL, stopped_handler },
+    { ST_RUNNING, ST_ROOT,   ST_PLAYING,  NULL, NULL, NULL, running_handler },
+    { ST_PAUSED,  ST_RUNNING, ELIB_FSM_STATE_INVALID, NULL, NULL, NULL, paused_handler },
+    { ST_PLAYING, ST_RUNNING, ELIB_FSM_STATE_INVALID, NULL, NULL, NULL, playing_handler },
+};
+
+elib_fsm_hsm_ctx_t fsm;
+elib_fsm_hsm_init(&fsm, states, 5, ST_ROOT, NULL);
+
+elib_fsm_hsm_dispatch(&fsm, EVT_START);  /* STOPPED -> RUNNING -> PLAYING */
+elib_fsm_hsm_dispatch(&fsm, EVT_PAUSE);  /* PLAYING -> PAUSED */
+elib_fsm_hsm_dispatch(&fsm, EVT_STOP);   /* PAUSED: unhandled -> bubbles to RUNNING -> STOPPED */
 ```
 
 ## 使用案例
@@ -226,6 +273,17 @@ elib_fsm_cb_init(&pwr_fsm, pwr_states, 4, PWR_OFF, &power_data);
 | `elib_fsm_cb_poll(ctx, period_ms)` | 推进一个 tick，返回当前状态；延迟等待中返回 -1；到期时执行 entry；自动调用当前状态 run 回调 |
 | `elib_fsm_cb_current(ctx)` | 获取当前状态 |
 
+### 层次状态机
+
+| 函数 | 说明 |
+|------|------|
+| `elib_fsm_hsm_init(ctx, states, state_count, initial, user_data)` | 初始化，设置状态描述符和初始状态，沿 initial 链下降到叶子状态 |
+| `elib_fsm_hsm_deinit(ctx)` | 反初始化 |
+| `elib_fsm_hsm_goto(ctx, target)` | 跳转状态（LCA 语义），exit 从叶子到 LCA，entry 从 LCA 到目标，composite 状态沿 initial 链下降 |
+| `elib_fsm_hsm_poll(ctx)` | 推进一个 tick，调用叶子状态 run 回调，返回当前叶子状态 |
+| `elib_fsm_hsm_dispatch(ctx, event)` | 投递事件，从叶子状态沿活跃路径冒泡，返回是否被处理 |
+| `elib_fsm_hsm_current(ctx)` | 获取当前叶子状态 |
+
 ## 编译
 
 ```bash
@@ -234,6 +292,9 @@ gcc -c elib-state-machine/src/elib_fsm_core.c -I elib-state-machine/include
 
 # 回调状态机
 gcc -c elib-state-machine/src/elib_fsm_cb_core.c -I elib-state-machine/include
+
+# 层次状态机
+gcc -c elib-state-machine/src/elib_fsm_hsm_core.c -I elib-state-machine/include
 ```
 
 ## 测试
@@ -244,4 +305,7 @@ gcc -o test_elib_fsm elib-state-machine/test/test_elib_fsm.c \
 
 gcc -o test_elib_fsm_cb elib-state-machine/test/test_elib_fsm_cb.c \
     elib-state-machine/src/elib_fsm_cb_core.c -I elib-state-machine/include && ./test_elib_fsm_cb
+
+gcc -o test_elib_fsm_hsm elib-state-machine/test/test_elib_fsm_hsm.c \
+    elib-state-machine/src/elib_fsm_hsm_core.c -I elib-state-machine/include && ./test_elib_fsm_hsm
 ```
