@@ -52,6 +52,34 @@ static void on_run(void *user_data) {
     run_count++;
 }
 
+/* Handler tracking */
+static int handler_count;
+static elib_fsm_event_t last_handler_event;
+static bool handler_return_value;
+static elib_fsm_hsm_ctx_t *handler_ctx;
+
+static void reset_handler_state(void) {
+    handler_count = 0;
+    last_handler_event = -99;
+    handler_return_value = false;
+    handler_ctx = NULL;
+}
+
+static bool on_handler(elib_fsm_event_t event, void *user_data) {
+    (void)user_data;
+    handler_count++;
+    last_handler_event = event;
+    return handler_return_value;
+}
+
+static bool on_handler_goto_s2(elib_fsm_event_t event, void *user_data) {
+    (void)event;
+    if (handler_ctx != NULL) {
+        elib_fsm_hsm_goto(handler_ctx, ST_S2);
+    }
+    return true;
+}
+
 /* State descriptors */
 static const elib_fsm_hsm_state_desc_t test_states[] = {
     { ST_ROOT, ELIB_FSM_STATE_INVALID, ST_A, on_entry, on_exit, NULL, NULL },
@@ -63,6 +91,55 @@ static const elib_fsm_hsm_state_desc_t test_states[] = {
     { ST_S4,   ST_B,  ELIB_FSM_STATE_INVALID, on_entry, on_exit, on_run, NULL },
 };
 #define TEST_STATE_COUNT (sizeof(test_states) / sizeof(test_states[0]))
+
+/* Handler implementations for dispatch test */
+static int s1_handler_count;
+static int a_handler_count;
+static int root_handler_count;
+static bool s1_handler_result;
+static bool a_handler_result;
+static bool root_handler_result;
+
+static void reset_dispatch_tracking(void) {
+    s1_handler_count = 0;
+    a_handler_count = 0;
+    root_handler_count = 0;
+    s1_handler_result = false;
+    a_handler_result = false;
+    root_handler_result = false;
+}
+
+static bool handler_s1(elib_fsm_event_t event, void *user_data) {
+    (void)user_data;
+    s1_handler_count++;
+    last_handler_event = event;
+    return s1_handler_result;
+}
+
+static bool handler_a(elib_fsm_event_t event, void *user_data) {
+    (void)user_data;
+    a_handler_count++;
+    last_handler_event = event;
+    return a_handler_result;
+}
+
+static bool handler_root(elib_fsm_event_t event, void *user_data) {
+    (void)user_data;
+    root_handler_count++;
+    last_handler_event = event;
+    return root_handler_result;
+}
+
+/* State descriptors with handlers for dispatch tests */
+static const elib_fsm_hsm_state_desc_t dispatch_states[] = {
+    { ST_ROOT, ELIB_FSM_STATE_INVALID, ST_A, on_entry, on_exit, on_run, handler_root },
+    { ST_A,    ST_ROOT, ST_S1,         on_entry, on_exit, on_run, handler_a },
+    { ST_B,    ST_ROOT, ST_S3,         on_entry, on_exit, on_run, NULL },
+    { ST_S1,   ST_A,  ELIB_FSM_STATE_INVALID, on_entry, on_exit, on_run, handler_s1 },
+    { ST_S2,   ST_A,  ELIB_FSM_STATE_INVALID, on_entry, on_exit, on_run, on_handler },
+    { ST_S3,   ST_B,  ELIB_FSM_STATE_INVALID, on_entry, on_exit, on_run, NULL },
+    { ST_S4,   ST_B,  ELIB_FSM_STATE_INVALID, on_entry, on_exit, on_run, NULL },
+};
 
 static elib_fsm_hsm_ctx_t test_ctx;
 
@@ -340,6 +417,160 @@ static void test_poll_skips_null_run(void) {
     printf("PASSED\n");
 }
 
+/* --- Dispatch tests --- */
+
+static void test_dispatch_handled_by_leaf(void) {
+    printf("Test: dispatch handled by leaf state... ");
+    elib_fsm_hsm_ctx_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    reset_callback_state();
+    reset_dispatch_tracking();
+    s1_handler_result = true;
+
+    elib_fsm_hsm_init(&ctx, dispatch_states,
+                       sizeof(dispatch_states) / sizeof(dispatch_states[0]),
+                       ST_ROOT, NULL);
+
+    bool handled = elib_fsm_hsm_dispatch(&ctx, 42);
+    assert(handled == true);
+    assert(s1_handler_count == 1);
+    assert(last_handler_event == 42);
+    assert(a_handler_count == 0);
+    assert(root_handler_count == 0);
+
+    printf("PASSED\n");
+}
+
+static void test_dispatch_bubble_to_parent(void) {
+    printf("Test: dispatch bubbles to parent when leaf returns false... ");
+    elib_fsm_hsm_ctx_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    reset_callback_state();
+    reset_dispatch_tracking();
+    s1_handler_result = false;
+    a_handler_result = true;
+
+    elib_fsm_hsm_init(&ctx, dispatch_states,
+                       sizeof(dispatch_states) / sizeof(dispatch_states[0]),
+                       ST_ROOT, NULL);
+
+    bool handled = elib_fsm_hsm_dispatch(&ctx, 42);
+    assert(handled == true);
+    assert(s1_handler_count == 1);
+    assert(a_handler_count == 1);
+    assert(root_handler_count == 0);
+
+    printf("PASSED\n");
+}
+
+static void test_dispatch_bubble_to_root(void) {
+    printf("Test: dispatch bubbles all the way to root... ");
+    elib_fsm_hsm_ctx_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    reset_callback_state();
+    reset_dispatch_tracking();
+    s1_handler_result = false;
+    a_handler_result = false;
+    root_handler_result = true;
+
+    elib_fsm_hsm_init(&ctx, dispatch_states,
+                       sizeof(dispatch_states) / sizeof(dispatch_states[0]),
+                       ST_ROOT, NULL);
+
+    bool handled = elib_fsm_hsm_dispatch(&ctx, 42);
+    assert(handled == true);
+    assert(s1_handler_count == 1);
+    assert(a_handler_count == 1);
+    assert(root_handler_count == 1);
+
+    printf("PASSED\n");
+}
+
+static void test_dispatch_unhandled(void) {
+    printf("Test: dispatch returns false when no handler handles... ");
+    elib_fsm_hsm_ctx_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    reset_callback_state();
+    reset_dispatch_tracking();
+    s1_handler_result = false;
+    a_handler_result = false;
+    root_handler_result = false;
+
+    elib_fsm_hsm_init(&ctx, dispatch_states,
+                       sizeof(dispatch_states) / sizeof(dispatch_states[0]),
+                       ST_ROOT, NULL);
+
+    bool handled = elib_fsm_hsm_dispatch(&ctx, 42);
+    assert(handled == false);
+    assert(s1_handler_count == 1);
+    assert(a_handler_count == 1);
+    assert(root_handler_count == 1);
+
+    printf("PASSED\n");
+}
+
+static void test_dispatch_null_handler_bubbles(void) {
+    printf("Test: dispatch with null handler bubbles up... ");
+    elib_fsm_hsm_ctx_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    reset_callback_state();
+    reset_dispatch_tracking();
+
+    elib_fsm_hsm_init(&ctx, dispatch_states,
+                       sizeof(dispatch_states) / sizeof(dispatch_states[0]),
+                       ST_B, NULL);
+    root_handler_result = true;
+
+    bool handled = elib_fsm_hsm_dispatch(&ctx, 42);
+    assert(handled == true);
+    assert(root_handler_count == 1);
+
+    printf("PASSED\n");
+}
+
+static void test_dispatch_null_ctx(void) {
+    printf("Test: dispatch with null ctx... ");
+    assert(elib_fsm_hsm_dispatch(NULL, 1) == false);
+    printf("PASSED\n");
+}
+
+static void test_dispatch_goto_inside_handler(void) {
+    printf("Test: dispatch with goto inside handler stops bubbling... ");
+    elib_fsm_hsm_ctx_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    reset_callback_state();
+    reset_dispatch_tracking();
+    handler_ctx = &ctx;
+
+    static const elib_fsm_hsm_state_desc_t goto_states[] = {
+        { ST_ROOT, ELIB_FSM_STATE_INVALID, ST_A, on_entry, on_exit, on_run, handler_root },
+        { ST_A,    ST_ROOT, ST_S1,         on_entry, on_exit, on_run, handler_a },
+        { ST_B,    ST_ROOT, ST_S3,         on_entry, on_exit, on_run, NULL },
+        { ST_S1,   ST_A,  ELIB_FSM_STATE_INVALID, on_entry, on_exit, on_run, on_handler_goto_s2 },
+        { ST_S2,   ST_A,  ELIB_FSM_STATE_INVALID, on_entry, on_exit, on_run, on_handler },
+        { ST_S3,   ST_B,  ELIB_FSM_STATE_INVALID, on_entry, on_exit, on_run, NULL },
+        { ST_S4,   ST_B,  ELIB_FSM_STATE_INVALID, on_entry, on_exit, on_run, NULL },
+    };
+
+    s1_handler_result = false;
+    a_handler_result = false;
+    root_handler_result = false;
+
+    elib_fsm_hsm_init(&ctx, goto_states,
+                       sizeof(goto_states) / sizeof(goto_states[0]),
+                       ST_ROOT, NULL);
+
+    assert(elib_fsm_hsm_current(&ctx) == ST_S1);
+
+    bool handled = elib_fsm_hsm_dispatch(&ctx, 1);
+    assert(handled == true);
+    assert(elib_fsm_hsm_current(&ctx) == ST_S2);
+    assert(a_handler_count == 0);
+    assert(root_handler_count == 0);
+
+    printf("PASSED\n");
+}
+
 int main(void) {
     printf("=== elib-state-machine (hsm) tests ===\n\n");
 
@@ -367,6 +598,14 @@ int main(void) {
     test_poll_calls_run();
     test_poll_null_ctx();
     test_poll_skips_null_run();
+
+    test_dispatch_handled_by_leaf();
+    test_dispatch_bubble_to_parent();
+    test_dispatch_bubble_to_root();
+    test_dispatch_unhandled();
+    test_dispatch_null_handler_bubbles();
+    test_dispatch_null_ctx();
+    test_dispatch_goto_inside_handler();
 
     printf("\n=== All tests passed ===\n");
     return 0;

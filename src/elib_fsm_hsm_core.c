@@ -210,9 +210,35 @@ elib_fsm_state_t elib_fsm_hsm_poll(elib_fsm_hsm_ctx_t *ctx) {
     return ctx->current;
 }
 
-/* Stub: dispatch - implemented in Task 5 */
+/* Dispatch event: bubble up active path, return true if handled */
 bool elib_fsm_hsm_dispatch(elib_fsm_hsm_ctx_t *ctx,
                             elib_fsm_event_t event) {
-    (void)ctx; (void)event;
+    if (ctx == NULL || !ctx->initialized) {
+        return false;
+    }
+
+    elib_fsm_state_t state = ctx->current;
+    while (state != ELIB_FSM_STATE_INVALID) {
+        const elib_fsm_hsm_state_desc_t *desc = elib_fsm_hsm_find_state(
+            ctx->states, ctx->state_count, state);
+        if (desc == NULL) {
+            return false;
+        }
+
+        elib_fsm_state_t before = ctx->current;
+        bool handled = (desc->handler != NULL) && desc->handler(event, ctx->user_data);
+
+        /* If goto was called inside handler, stop bubbling */
+        if (ctx->current != before) {
+            return true;
+        }
+
+        if (handled) {
+            return true;
+        }
+
+        state = desc->parent;
+    }
+
     return false;
 }
