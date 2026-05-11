@@ -295,6 +295,51 @@ static void test_goto_root_self_transition(void) {
     printf("PASSED\n");
 }
 
+/* --- Poll tests --- */
+
+static void test_poll_calls_run(void) {
+    printf("Test: poll calls leaf state's run callback... ");
+    reset_test();
+    elib_fsm_hsm_init(&test_ctx, test_states, TEST_STATE_COUNT, ST_ROOT, NULL);
+    reset_callback_state();
+
+    elib_fsm_state_t state = elib_fsm_hsm_poll(&test_ctx);
+    assert(state == ST_S1);
+    assert(run_count == 1);
+
+    elib_fsm_hsm_poll(&test_ctx);
+    assert(run_count == 2);
+
+    printf("PASSED\n");
+}
+
+static void test_poll_null_ctx(void) {
+    printf("Test: poll with null ctx... ");
+    assert(elib_fsm_hsm_poll(NULL) == ELIB_FSM_STATE_INVALID);
+    printf("PASSED\n");
+}
+
+static void test_poll_skips_null_run(void) {
+    printf("Test: poll skips null run callback... ");
+    reset_test();
+
+    static const elib_fsm_hsm_state_desc_t no_run_states[] = {
+        { ST_ROOT, ELIB_FSM_STATE_INVALID, ST_A, on_entry, on_exit, NULL, NULL },
+        { ST_A,    ST_ROOT, ST_S1,         on_entry, on_exit, NULL, NULL },
+        { ST_S1,   ST_A,  ELIB_FSM_STATE_INVALID, on_entry, on_exit, NULL, NULL },
+    };
+    elib_fsm_hsm_ctx_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    elib_fsm_hsm_init(&ctx, no_run_states, 3, ST_ROOT, NULL);
+    run_count = 0;
+
+    elib_fsm_state_t state = elib_fsm_hsm_poll(&ctx);
+    assert(state == ST_S1);
+    assert(run_count == 0);
+
+    printf("PASSED\n");
+}
+
 int main(void) {
     printf("=== elib-state-machine (hsm) tests ===\n\n");
 
@@ -318,6 +363,10 @@ int main(void) {
     test_goto_null_ctx();
     test_goto_state_not_found();
     test_goto_root_self_transition();
+
+    test_poll_calls_run();
+    test_poll_null_ctx();
+    test_poll_skips_null_run();
 
     printf("\n=== All tests passed ===\n");
     return 0;

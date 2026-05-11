@@ -195,11 +195,18 @@ elib_fsm_err_t elib_fsm_hsm_goto(elib_fsm_hsm_ctx_t *ctx,
     return ELIB_FSM_OK;
 }
 
-/* Stub: poll - implemented in Task 4 */
+/* Advance one tick: call leaf state's run callback, return current leaf state */
 elib_fsm_state_t elib_fsm_hsm_poll(elib_fsm_hsm_ctx_t *ctx) {
     if (ctx == NULL || !ctx->initialized) {
         return ELIB_FSM_STATE_INVALID;
     }
+
+    const elib_fsm_hsm_state_desc_t *desc = elib_fsm_hsm_find_state(
+        ctx->states, ctx->state_count, ctx->current);
+    if (desc != NULL && desc->run != NULL) {
+        desc->run(ctx->user_data);
+    }
+
     return ctx->current;
 }
 
