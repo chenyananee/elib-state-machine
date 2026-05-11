@@ -72,15 +72,15 @@ elib_fsm_cb_poll(&ctx, 10);              /* 10ms tick，自动调用 on_run */
 #include "elib_fsm_hsm.h"
 
 enum { ST_OFF, ST_ON };
-enum { EVT_POWER, EVT_TIMEOUT };
+enum { EVT_CMD_POWER, EVT_CMD_TIMEOUT };
 
-static bool off_handler(elib_fsm_event_t evt, void *ud) {
-    if (evt == EVT_POWER) { elib_fsm_hsm_goto((elib_fsm_hsm_ctx_t*)ud, ST_ON); return true; }
+static bool off_handler(const elib_fsm_hsm_event_t *evt, void *ud) {
+    if (evt->id == EVT_CMD_POWER) { elib_fsm_hsm_goto((elib_fsm_hsm_ctx_t*)ud, ST_ON); return true; }
     return false;
 }
 
-static bool on_handler(elib_fsm_event_t evt, void *ud) {
-    if (evt == EVT_TIMEOUT) { elib_fsm_hsm_goto((elib_fsm_hsm_ctx_t*)ud, ST_OFF); return true; }
+static bool on_handler(const elib_fsm_hsm_event_t *evt, void *ud) {
+    if (evt->id == EVT_CMD_TIMEOUT) { elib_fsm_hsm_goto((elib_fsm_hsm_ctx_t*)ud, ST_OFF); return true; }
     return false;
 }
 
@@ -92,8 +92,9 @@ static const elib_fsm_hsm_state_desc_t states[] = {
 elib_fsm_hsm_ctx_t fsm;
 elib_fsm_hsm_init(&fsm, states, 2, ST_OFF, &fsm);
 
-elib_fsm_hsm_dispatch(&fsm, EVT_POWER);   /* OFF -> ON */
-elib_fsm_hsm_dispatch(&fsm, EVT_TIMEOUT); /* ON -> OFF */
+elib_fsm_hsm_event_t evt = {0};
+evt.id = EVT_CMD_POWER; elib_fsm_hsm_dispatch(&fsm, &evt);   /* OFF -> ON */
+evt.id = EVT_CMD_TIMEOUT; elib_fsm_hsm_dispatch(&fsm, &evt); /* ON -> OFF */
 ```
 
 ## 使用案例
@@ -257,7 +258,7 @@ enum {
 };
 
 enum {
-    EVT_START, EVT_STOP, EVT_PAUSE, EVT_RESUME
+    EVT_CMD_START, EVT_CMD_STOP, EVT_CMD_PAUSE, EVT_CMD_RESUME
 };
 
 typedef struct {
@@ -292,24 +293,24 @@ static void playing_run(void *user_data) {
     audio_feed_decoder();
 }
 
-static bool stopped_handler(elib_fsm_event_t evt, void *ud) {
-    if (evt == EVT_START) { elib_fsm_hsm_goto((elib_fsm_hsm_ctx_t*)ud, ST_RUNNING); return true; }
+static bool stopped_handler(const elib_fsm_hsm_event_t *evt, void *ud) {
+    if (evt->id == EVT_CMD_START) { elib_fsm_hsm_goto((elib_fsm_hsm_ctx_t*)ud, ST_RUNNING); return true; }
     return false;
 }
 
-static bool running_handler(elib_fsm_event_t evt, void *ud) {
-    if (evt == EVT_STOP) { elib_fsm_hsm_goto((elib_fsm_hsm_ctx_t*)ud, ST_STOPPED); return true; }
+static bool running_handler(const elib_fsm_hsm_event_t *evt, void *ud) {
+    if (evt->id == EVT_CMD_STOP) { elib_fsm_hsm_goto((elib_fsm_hsm_ctx_t*)ud, ST_STOPPED); return true; }
     return false;
 }
 
-static bool playing_handler(elib_fsm_event_t evt, void *ud) {
-    if (evt == EVT_PAUSE) { elib_fsm_hsm_goto((elib_fsm_hsm_ctx_t*)ud, ST_PAUSED); return true; }
-    return false;  /* EVT_STOP 未处理，冒泡到 RUNNING */
+static bool playing_handler(const elib_fsm_hsm_event_t *evt, void *ud) {
+    if (evt->id == EVT_CMD_PAUSE) { elib_fsm_hsm_goto((elib_fsm_hsm_ctx_t*)ud, ST_PAUSED); return true; }
+    return false;  /* EVT_CMD_STOP 未处理，冒泡到 RUNNING */
 }
 
-static bool paused_handler(elib_fsm_event_t evt, void *ud) {
-    if (evt == EVT_RESUME) { elib_fsm_hsm_goto((elib_fsm_hsm_ctx_t*)ud, ST_PLAYING); return true; }
-    return false;  /* EVT_STOP 未处理，冒泡到 RUNNING */
+static bool paused_handler(const elib_fsm_hsm_event_t *evt, void *ud) {
+    if (evt->id == EVT_CMD_RESUME) { elib_fsm_hsm_goto((elib_fsm_hsm_ctx_t*)ud, ST_PLAYING); return true; }
+    return false;  /* EVT_CMD_STOP 未处理，冒泡到 RUNNING */
 }
 
 static const elib_fsm_hsm_state_desc_t player_states[] = {
@@ -328,17 +329,21 @@ elib_fsm_hsm_init(&player_fsm, player_states, 5, ST_ROOT, &player_data);
 /* 初始状态：ROOT -> STOPPED (via initial 链) */
 /* entry(ROOT), entry(STOPPED) */
 
-elib_fsm_hsm_dispatch(&player_fsm, EVT_START);
-/* STOPPED 处理 EVT_START: goto RUNNING */
+elib_fsm_hsm_event_t evt = {0};
+
+evt.id = EVT_CMD_START;
+evt.data = &player_data;  /* 事件可携带自定义数据 */
+elib_fsm_hsm_dispatch(&player_fsm, &evt);
+/* STOPPED 处理 EVT_CMD_START: goto RUNNING */
 /* exit(STOPPED), entry(RUNNING), entry(PLAYING via initial) */
 
-elib_fsm_hsm_dispatch(&player_fsm, EVT_PAUSE);
-/* PLAYING 处理 EVT_PAUSE: goto PAUSED */
+evt.id = EVT_CMD_PAUSE; elib_fsm_hsm_dispatch(&player_fsm, &evt);
+/* PLAYING 处理 EVT_CMD_PAUSE: goto PAUSED */
 /* exit(PLAYING), entry(PAUSED) */
 
-elib_fsm_hsm_dispatch(&player_fsm, EVT_STOP);
-/* PAUSED 不处理 EVT_STOP -> 冒泡到 RUNNING */
-/* RUNNING 处理 EVT_STOP: goto STOPPED */
+evt.id = EVT_CMD_STOP; elib_fsm_hsm_dispatch(&player_fsm, &evt);
+/* PAUSED 不处理 EVT_CMD_STOP -> 冒泡到 RUNNING */
+/* RUNNING 处理 EVT_CMD_STOP: goto STOPPED */
 /* exit(PAUSED), exit(RUNNING), entry(STOPPED) */
 
 /* 主循环中驱动 tick */
@@ -371,13 +376,26 @@ while (1) {
 
 ### 层次状态机
 
+**事件结构** (`elib_fsm_hsm_event_t`)：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | `int` | 主事件 ID |
+| `sub_id` | `int` | 子事件 ID |
+| `cmd` | `int` | 命令 |
+| `arg` | `int` | 参数 |
+| `data` | `void*` | 数据指针 |
+| `exec` | `callback` | 可选执行回调（nullable） |
+
+**API：**
+
 | 函数 | 说明 |
 |------|------|
 | `elib_fsm_hsm_init(ctx, states, state_count, initial, user_data)` | 初始化，沿 initial 链下降到叶子状态，调用路径上所有 entry 回调 |
 | `elib_fsm_hsm_deinit(ctx)` | 反初始化 |
 | `elib_fsm_hsm_goto(ctx, target)` | 跳转状态（LCA 语义），exit 从叶子到 LCA，entry 从 LCA 到目标，composite 状态沿 initial 链下降 |
 | `elib_fsm_hsm_poll(ctx)` | 推进一个 tick，调用叶子状态 run 回调，返回当前叶子状态 |
-| `elib_fsm_hsm_dispatch(ctx, event)` | 投递事件，从叶子状态沿活跃路径冒泡，返回是否被处理 |
+| `elib_fsm_hsm_dispatch(ctx, event)` | 投递事件（`const elib_fsm_hsm_event_t*`），从叶子状态沿活跃路径冒泡，返回是否被处理 |
 | `elib_fsm_hsm_current(ctx)` | 获取当前叶子状态 |
 
 ## 编译

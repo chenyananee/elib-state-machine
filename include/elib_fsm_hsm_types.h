@@ -12,8 +12,21 @@
 extern "C" {
 #endif
 
+/* Event exec callback */
+typedef void (*elib_fsm_hsm_event_exec_fn)(void *data);
+
+/* Event structure */
+typedef struct {
+    elib_fsm_event_t id;                         /* Main event ID */
+    elib_fsm_event_t sub_id;                     /* Sub event ID */
+    elib_fsm_event_t cmd;                        /* Command */
+    elib_fsm_event_t arg;                        /* Argument */
+    void *data;                                  /* Data pointer */
+    elib_fsm_hsm_event_exec_fn exec;             /* Optional exec callback (nullable) */
+} elib_fsm_hsm_event_t;
+
 /* Event handler callback: returns true if handled (stop propagation), false to bubble up */
-typedef bool (*elib_fsm_hsm_handler_fn)(elib_fsm_event_t event, void *user_data);
+typedef bool (*elib_fsm_hsm_handler_fn)(const elib_fsm_hsm_event_t *event, void *user_data);
 
 /* State descriptor - callbacks and hierarchy per state */
 typedef struct {

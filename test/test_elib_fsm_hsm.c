@@ -54,25 +54,25 @@ static void on_run(void *user_data) {
 
 /* Handler tracking */
 static int handler_count;
-static elib_fsm_event_t last_handler_event;
+static elib_fsm_event_t last_handler_id;
 static bool handler_return_value;
 static elib_fsm_hsm_ctx_t *handler_ctx;
 
 static void reset_handler_state(void) {
     handler_count = 0;
-    last_handler_event = -99;
+    last_handler_id = -99;
     handler_return_value = false;
     handler_ctx = NULL;
 }
 
-static bool on_handler(elib_fsm_event_t event, void *user_data) {
+static bool on_handler(const elib_fsm_hsm_event_t *event, void *user_data) {
     (void)user_data;
     handler_count++;
-    last_handler_event = event;
+    last_handler_id = event->id;
     return handler_return_value;
 }
 
-static bool on_handler_goto_s2(elib_fsm_event_t event, void *user_data) {
+static bool on_handler_goto_s2(const elib_fsm_hsm_event_t *event, void *user_data) {
     (void)event;
     if (handler_ctx != NULL) {
         elib_fsm_hsm_goto(handler_ctx, ST_S2);
@@ -109,24 +109,24 @@ static void reset_dispatch_tracking(void) {
     root_handler_result = false;
 }
 
-static bool handler_s1(elib_fsm_event_t event, void *user_data) {
+static bool handler_s1(const elib_fsm_hsm_event_t *event, void *user_data) {
     (void)user_data;
     s1_handler_count++;
-    last_handler_event = event;
+    last_handler_id = event->id;
     return s1_handler_result;
 }
 
-static bool handler_a(elib_fsm_event_t event, void *user_data) {
+static bool handler_a(const elib_fsm_hsm_event_t *event, void *user_data) {
     (void)user_data;
     a_handler_count++;
-    last_handler_event = event;
+    last_handler_id = event->id;
     return a_handler_result;
 }
 
-static bool handler_root(elib_fsm_event_t event, void *user_data) {
+static bool handler_root(const elib_fsm_hsm_event_t *event, void *user_data) {
     (void)user_data;
     root_handler_count++;
-    last_handler_event = event;
+    last_handler_id = event->id;
     return root_handler_result;
 }
 
@@ -226,7 +226,8 @@ static void test_uninitialized_context(void) {
 
     assert(elib_fsm_hsm_goto(&test_ctx, ST_S2) == ELIB_FSM_ERR_NOT_INITIALIZED);
     assert(elib_fsm_hsm_poll(&test_ctx) == ELIB_FSM_STATE_INVALID);
-    assert(elib_fsm_hsm_dispatch(&test_ctx, 1) == false);
+    static const elib_fsm_hsm_event_t evt1 = {1};
+    assert(elib_fsm_hsm_dispatch(&test_ctx, &evt1) == false);
     assert(elib_fsm_hsm_current(&test_ctx) == ELIB_FSM_STATE_INVALID);
 
     printf("PASSED\n");
@@ -431,10 +432,11 @@ static void test_dispatch_handled_by_leaf(void) {
                        sizeof(dispatch_states) / sizeof(dispatch_states[0]),
                        ST_ROOT, NULL);
 
-    bool handled = elib_fsm_hsm_dispatch(&ctx, 42);
+    elib_fsm_hsm_event_t evt = {.id = 42, .sub_id = 0, .cmd = 0, .arg = 0, .data = NULL, .exec = NULL};
+    bool handled = elib_fsm_hsm_dispatch(&ctx, &evt);
     assert(handled == true);
     assert(s1_handler_count == 1);
-    assert(last_handler_event == 42);
+    assert(last_handler_id == 42);
     assert(a_handler_count == 0);
     assert(root_handler_count == 0);
 
@@ -454,7 +456,8 @@ static void test_dispatch_bubble_to_parent(void) {
                        sizeof(dispatch_states) / sizeof(dispatch_states[0]),
                        ST_ROOT, NULL);
 
-    bool handled = elib_fsm_hsm_dispatch(&ctx, 42);
+    elib_fsm_hsm_event_t evt = {.id = 42, .sub_id = 0, .cmd = 0, .arg = 0, .data = NULL, .exec = NULL};
+    bool handled = elib_fsm_hsm_dispatch(&ctx, &evt);
     assert(handled == true);
     assert(s1_handler_count == 1);
     assert(a_handler_count == 1);
@@ -477,7 +480,8 @@ static void test_dispatch_bubble_to_root(void) {
                        sizeof(dispatch_states) / sizeof(dispatch_states[0]),
                        ST_ROOT, NULL);
 
-    bool handled = elib_fsm_hsm_dispatch(&ctx, 42);
+    elib_fsm_hsm_event_t evt = {.id = 42, .sub_id = 0, .cmd = 0, .arg = 0, .data = NULL, .exec = NULL};
+    bool handled = elib_fsm_hsm_dispatch(&ctx, &evt);
     assert(handled == true);
     assert(s1_handler_count == 1);
     assert(a_handler_count == 1);
@@ -500,7 +504,8 @@ static void test_dispatch_unhandled(void) {
                        sizeof(dispatch_states) / sizeof(dispatch_states[0]),
                        ST_ROOT, NULL);
 
-    bool handled = elib_fsm_hsm_dispatch(&ctx, 42);
+    elib_fsm_hsm_event_t evt = {.id = 42, .sub_id = 0, .cmd = 0, .arg = 0, .data = NULL, .exec = NULL};
+    bool handled = elib_fsm_hsm_dispatch(&ctx, &evt);
     assert(handled == false);
     assert(s1_handler_count == 1);
     assert(a_handler_count == 1);
@@ -521,7 +526,8 @@ static void test_dispatch_null_handler_bubbles(void) {
                        ST_B, NULL);
     root_handler_result = true;
 
-    bool handled = elib_fsm_hsm_dispatch(&ctx, 42);
+    elib_fsm_hsm_event_t evt = {.id = 42, .sub_id = 0, .cmd = 0, .arg = 0, .data = NULL, .exec = NULL};
+    bool handled = elib_fsm_hsm_dispatch(&ctx, &evt);
     assert(handled == true);
     assert(root_handler_count == 1);
 
@@ -530,7 +536,8 @@ static void test_dispatch_null_handler_bubbles(void) {
 
 static void test_dispatch_null_ctx(void) {
     printf("Test: dispatch with null ctx... ");
-    assert(elib_fsm_hsm_dispatch(NULL, 1) == false);
+    elib_fsm_hsm_event_t evt = {.id = 1, .sub_id = 0, .cmd = 0, .arg = 0, .data = NULL, .exec = NULL};
+    assert(elib_fsm_hsm_dispatch(NULL, &evt) == false);
     printf("PASSED\n");
 }
 
@@ -562,11 +569,59 @@ static void test_dispatch_goto_inside_handler(void) {
 
     assert(elib_fsm_hsm_current(&ctx) == ST_S1);
 
-    bool handled = elib_fsm_hsm_dispatch(&ctx, 1);
+    elib_fsm_hsm_event_t evt = {.id = 1, .sub_id = 0, .cmd = 0, .arg = 0, .data = NULL, .exec = NULL};
+    bool handled = elib_fsm_hsm_dispatch(&ctx, &evt);
     assert(handled == true);
     assert(elib_fsm_hsm_current(&ctx) == ST_S2);
     assert(a_handler_count == 0);
     assert(root_handler_count == 0);
+
+    printf("PASSED\n");
+}
+
+static void test_dispatch_event_fields(void) {
+    printf("Test: dispatch event fields are passed correctly... ");
+    elib_fsm_hsm_ctx_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    reset_callback_state();
+    reset_dispatch_tracking();
+    s1_handler_result = true;
+
+    elib_fsm_hsm_init(&ctx, dispatch_states,
+                       sizeof(dispatch_states) / sizeof(dispatch_states[0]),
+                       ST_ROOT, NULL);
+
+    int payload = 42;
+    static bool exec_called = false;
+    exec_called = false;
+
+    elib_fsm_hsm_event_t evt = {
+        .id = 10,
+        .sub_id = 20,
+        .cmd = 30,
+        .arg = 40,
+        .data = &payload,
+        .exec = NULL,
+    };
+    bool handled = elib_fsm_hsm_dispatch(&ctx, &evt);
+    assert(handled == true);
+    assert(last_handler_id == 10);
+
+    printf("PASSED\n");
+}
+
+static void test_dispatch_null_event(void) {
+    printf("Test: dispatch with null event returns false... ");
+    elib_fsm_hsm_ctx_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    reset_callback_state();
+    reset_dispatch_tracking();
+
+    elib_fsm_hsm_init(&ctx, dispatch_states,
+                       sizeof(dispatch_states) / sizeof(dispatch_states[0]),
+                       ST_ROOT, NULL);
+
+    assert(elib_fsm_hsm_dispatch(&ctx, NULL) == false);
 
     printf("PASSED\n");
 }
@@ -606,6 +661,8 @@ int main(void) {
     test_dispatch_null_handler_bubbles();
     test_dispatch_null_ctx();
     test_dispatch_goto_inside_handler();
+    test_dispatch_event_fields();
+    test_dispatch_null_event();
 
     printf("\n=== All tests passed ===\n");
     return 0;

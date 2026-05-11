@@ -212,8 +212,8 @@ elib_fsm_state_t elib_fsm_hsm_poll(elib_fsm_hsm_ctx_t *ctx) {
 
 /* Dispatch event: bubble up active path, return true if handled */
 bool elib_fsm_hsm_dispatch(elib_fsm_hsm_ctx_t *ctx,
-                            elib_fsm_event_t event) {
-    if (ctx == NULL || !ctx->initialized) {
+                            const elib_fsm_hsm_event_t *event) {
+    if (ctx == NULL || !ctx->initialized || event == NULL) {
         return false;
     }
 
