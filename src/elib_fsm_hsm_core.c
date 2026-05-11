@@ -30,6 +30,67 @@ elib_fsm_state_t elib_fsm_hsm_find_leaf(
     return desc != NULL ? desc->state : ELIB_FSM_STATE_INVALID;
 }
 
+/* Compute lowest common ancestor of source and target */
+elib_fsm_state_t elib_fsm_hsm_compute_lca(
+    const elib_fsm_hsm_state_desc_t *states,
+    size_t state_count,
+    elib_fsm_state_t source,
+    elib_fsm_state_t target) {
+    /* Walk from target upward; first ancestor that is also an ancestor of source is the LCA */
+    elib_fsm_state_t t = target;
+    while (t != ELIB_FSM_STATE_INVALID) {
+        elib_fsm_state_t s = source;
+        while (s != ELIB_FSM_STATE_INVALID) {
+            if (s == t) return t;
+            const elib_fsm_hsm_state_desc_t *desc = elib_fsm_hsm_find_state(states, state_count, s);
+            s = (desc != NULL) ? desc->parent : ELIB_FSM_STATE_INVALID;
+        }
+        const elib_fsm_hsm_state_desc_t *desc = elib_fsm_hsm_find_state(states, state_count, t);
+        t = (desc != NULL) ? desc->parent : ELIB_FSM_STATE_INVALID;
+    }
+    return ELIB_FSM_STATE_INVALID;
+}
+
+/* Call entry callbacks from ancestor down to descendant (excluding ancestor, including descendant) */
+void elib_fsm_hsm_enter_path(
+    const elib_fsm_hsm_state_desc_t *states,
+    size_t state_count,
+    elib_fsm_state_t ancestor,
+    elib_fsm_state_t descendant,
+    void *user_data) {
+    elib_fsm_state_t path[ELIB_FSM_HSM_MAX_DEPTH];
+    int depth = 0;
+    elib_fsm_state_t s = descendant;
+    while (s != ancestor && s != ELIB_FSM_STATE_INVALID && depth < ELIB_FSM_HSM_MAX_DEPTH) {
+        path[depth++] = s;
+        const elib_fsm_hsm_state_desc_t *desc = elib_fsm_hsm_find_state(states, state_count, s);
+        s = (desc != NULL) ? desc->parent : ELIB_FSM_STATE_INVALID;
+    }
+    for (int i = depth - 1; i >= 0; i--) {
+        const elib_fsm_hsm_state_desc_t *desc = elib_fsm_hsm_find_state(states, state_count, path[i]);
+        if (desc != NULL && desc->entry != NULL) {
+            desc->entry(path[i], user_data);
+        }
+    }
+}
+
+/* Call exit callbacks from descendant up to ancestor (excluding ancestor, including descendant) */
+void elib_fsm_hsm_exit_path(
+    const elib_fsm_hsm_state_desc_t *states,
+    size_t state_count,
+    elib_fsm_state_t descendant,
+    elib_fsm_state_t ancestor,
+    void *user_data) {
+    elib_fsm_state_t s = descendant;
+    while (s != ancestor && s != ELIB_FSM_STATE_INVALID) {
+        const elib_fsm_hsm_state_desc_t *desc = elib_fsm_hsm_find_state(states, state_count, s);
+        if (desc != NULL && desc->exit != NULL) {
+            desc->exit(s, user_data);
+        }
+        s = (desc != NULL) ? desc->parent : ELIB_FSM_STATE_INVALID;
+    }
+}
+
 /* --- Public API --- */
 
 /* Initialize hierarchical state machine */
@@ -97,11 +158,41 @@ elib_fsm_state_t elib_fsm_hsm_current(const elib_fsm_hsm_ctx_t *ctx) {
     return ctx->current;
 }
 
-/* Stub: goto - implemented in Task 3 */
+/* Transition to target state (LCA semantics) */
 elib_fsm_err_t elib_fsm_hsm_goto(elib_fsm_hsm_ctx_t *ctx,
                                   elib_fsm_state_t target) {
-    (void)ctx; (void)target;
-    return ELIB_FSM_ERR_NOT_INITIALIZED;
+    if (ctx == NULL) {
+        return ELIB_FSM_ERR_INVALID_PARAM;
+    }
+    if (!ctx->initialized) {
+        return ELIB_FSM_ERR_NOT_INITIALIZED;
+    }
+
+    /* Validate target state exists */
+    if (elib_fsm_hsm_find_state(ctx->states, ctx->state_count, target) == NULL) {
+        return ELIB_FSM_ERR_STATE_NOT_FOUND;
+    }
+
+    elib_fsm_state_t source = ctx->current;
+
+    /* Compute LCA */
+    elib_fsm_state_t lca = elib_fsm_hsm_compute_lca(ctx->states, ctx->state_count, source, target);
+
+    /* Exit from source up to LCA (exclusive) */
+    elib_fsm_hsm_exit_path(ctx->states, ctx->state_count, source, lca, ctx->user_data);
+
+    /* Enter from LCA down to target (exclusive of LCA, inclusive of target) */
+    elib_fsm_hsm_enter_path(ctx->states, ctx->state_count, lca, target, ctx->user_data);
+
+    /* If target is composite, follow initial chain */
+    elib_fsm_state_t leaf = elib_fsm_hsm_find_leaf(ctx->states, ctx->state_count, target);
+    if (leaf != target && leaf != ELIB_FSM_STATE_INVALID) {
+        elib_fsm_hsm_enter_path(ctx->states, ctx->state_count, target, leaf, ctx->user_data);
+    }
+
+    ctx->current = (leaf != ELIB_FSM_STATE_INVALID) ? leaf : target;
+
+    return ELIB_FSM_OK;
 }
 
 /* Stub: poll - implemented in Task 4 */

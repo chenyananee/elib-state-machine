@@ -180,6 +180,121 @@ static void test_current_uninitialized(void) {
     printf("PASSED\n");
 }
 
+/* --- Goto tests --- */
+
+static void test_goto_sibling_same_parent(void) {
+    printf("Test: goto sibling under same parent (S1 -> S2)... ");
+    reset_test();
+    elib_fsm_hsm_init(&test_ctx, test_states, TEST_STATE_COUNT, ST_ROOT, NULL);
+    reset_callback_state();
+
+    elib_fsm_err_t err = elib_fsm_hsm_goto(&test_ctx, ST_S2);
+    assert(err == ELIB_FSM_OK);
+    assert(elib_fsm_hsm_current(&test_ctx) == ST_S2);
+    assert(exit_count == 1);
+    assert(last_exit_state == ST_S1);
+    assert(entry_count == 1);
+    assert(last_entry_state == ST_S2);
+
+    printf("PASSED\n");
+}
+
+static void test_goto_cross_branch(void) {
+    printf("Test: goto across branches (S1 -> S3)... ");
+    reset_test();
+    elib_fsm_hsm_init(&test_ctx, test_states, TEST_STATE_COUNT, ST_ROOT, NULL);
+    reset_callback_state();
+
+    elib_fsm_err_t err = elib_fsm_hsm_goto(&test_ctx, ST_S3);
+    assert(err == ELIB_FSM_OK);
+    assert(elib_fsm_hsm_current(&test_ctx) == ST_S3);
+    assert(exit_count == 2);
+    assert(entry_count == 2);
+
+    printf("PASSED\n");
+}
+
+static void test_goto_to_ancestor(void) {
+    printf("Test: goto ancestor state (S1 -> A)... ");
+    reset_test();
+    elib_fsm_hsm_init(&test_ctx, test_states, TEST_STATE_COUNT, ST_ROOT, NULL);
+    reset_callback_state();
+
+    elib_fsm_err_t err = elib_fsm_hsm_goto(&test_ctx, ST_A);
+    assert(err == ELIB_FSM_OK);
+    assert(elib_fsm_hsm_current(&test_ctx) == ST_S1);
+    assert(exit_count == 1);
+    assert(last_exit_state == ST_S1);
+    assert(entry_count == 1);
+    assert(last_entry_state == ST_S1);
+
+    printf("PASSED\n");
+}
+
+static void test_goto_to_descendant(void) {
+    printf("Test: goto descendant state (A -> S3) via composite target with initial... ");
+    reset_test();
+    elib_fsm_hsm_init(&test_ctx, test_states, TEST_STATE_COUNT, ST_ROOT, NULL);
+    reset_callback_state();
+
+    elib_fsm_err_t err = elib_fsm_hsm_goto(&test_ctx, ST_B);
+    assert(err == ELIB_FSM_OK);
+    assert(elib_fsm_hsm_current(&test_ctx) == ST_S3);
+    assert(exit_count == 2);
+    assert(entry_count == 2);
+
+    printf("PASSED\n");
+}
+
+static void test_goto_self_transition(void) {
+    printf("Test: goto self (S1 -> S1) external self-transition... ");
+    reset_test();
+    elib_fsm_hsm_init(&test_ctx, test_states, TEST_STATE_COUNT, ST_ROOT, NULL);
+    reset_callback_state();
+
+    elib_fsm_err_t err = elib_fsm_hsm_goto(&test_ctx, ST_S1);
+    assert(err == ELIB_FSM_OK);
+    assert(elib_fsm_hsm_current(&test_ctx) == ST_S1);
+    assert(exit_count == 1);
+    assert(last_exit_state == ST_S1);
+    assert(entry_count == 1);
+    assert(last_entry_state == ST_S1);
+
+    printf("PASSED\n");
+}
+
+static void test_goto_null_ctx(void) {
+    printf("Test: goto with null ctx... ");
+    elib_fsm_err_t err = elib_fsm_hsm_goto(NULL, ST_S2);
+    assert(err == ELIB_FSM_ERR_INVALID_PARAM);
+    printf("PASSED\n");
+}
+
+static void test_goto_state_not_found(void) {
+    printf("Test: goto non-existent state... ");
+    reset_test();
+    elib_fsm_hsm_init(&test_ctx, test_states, TEST_STATE_COUNT, ST_ROOT, NULL);
+
+    elib_fsm_err_t err = elib_fsm_hsm_goto(&test_ctx, 99);
+    assert(err == ELIB_FSM_ERR_STATE_NOT_FOUND);
+    printf("PASSED\n");
+}
+
+static void test_goto_root_self_transition(void) {
+    printf("Test: goto ROOT from inside (S1 -> ROOT)... ");
+    reset_test();
+    elib_fsm_hsm_init(&test_ctx, test_states, TEST_STATE_COUNT, ST_ROOT, NULL);
+    reset_callback_state();
+
+    elib_fsm_err_t err = elib_fsm_hsm_goto(&test_ctx, ST_ROOT);
+    assert(err == ELIB_FSM_OK);
+    assert(elib_fsm_hsm_current(&test_ctx) == ST_S1);
+    assert(exit_count == 3);
+    assert(entry_count == 3);
+
+    printf("PASSED\n");
+}
+
 int main(void) {
     printf("=== elib-state-machine (hsm) tests ===\n\n");
 
@@ -194,6 +309,15 @@ int main(void) {
     test_current_after_init();
     test_current_null_ctx();
     test_current_uninitialized();
+
+    test_goto_sibling_same_parent();
+    test_goto_cross_branch();
+    test_goto_to_ancestor();
+    test_goto_to_descendant();
+    test_goto_self_transition();
+    test_goto_null_ctx();
+    test_goto_state_not_found();
+    test_goto_root_self_transition();
 
     printf("\n=== All tests passed ===\n");
     return 0;
