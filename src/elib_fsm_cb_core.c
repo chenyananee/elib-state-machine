@@ -145,3 +145,11 @@ elib_fsm_state_t elib_fsm_cb_current(const elib_fsm_cb_ctx_t *ctx) {
     }
     return ctx->current;
 }
+
+/* Get last valid state (never returns INVALID during delay) */
+elib_fsm_state_t elib_fsm_cb_previous(const elib_fsm_cb_ctx_t *ctx) {
+    if (ctx == NULL || !ctx->initialized) {
+        return ELIB_FSM_STATE_INVALID;
+    }
+    return ctx->current;
+}

@@ -81,3 +81,10 @@ elib_fsm_state_t elib_fsm_current(const elib_fsm_ctx_t *ctx) {
     }
     return ctx->current;
 }
+
+elib_fsm_state_t elib_fsm_previous(const elib_fsm_ctx_t *ctx) {
+    if (ctx == NULL || !ctx->initialized) {
+        return ELIB_FSM_STATE_INVALID;
+    }
+    return ctx->current;
+}

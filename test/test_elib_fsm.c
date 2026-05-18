@@ -213,6 +213,30 @@ static void test_current_during_delay(void) {
     printf("PASSED\n");
 }
 
+static void test_previous(void) {
+    printf("Test: previous returns last valid state during delay... ");
+    reset_test();
+
+    assert(elib_fsm_previous(&test_ctx) == STATE_IDLE);
+
+    elib_fsm_goto(&test_ctx, STATE_ACTIVE, 100);
+    assert(elib_fsm_previous(&test_ctx) == STATE_IDLE);
+
+    elib_fsm_poll(&test_ctx, 50);
+    assert(elib_fsm_previous(&test_ctx) == STATE_IDLE);
+
+    elib_fsm_poll(&test_ctx, 50);
+    assert(elib_fsm_previous(&test_ctx) == STATE_ACTIVE);
+
+    printf("PASSED\n");
+}
+
+static void test_previous_null_ctx(void) {
+    printf("Test: previous with null ctx... ");
+    assert(elib_fsm_previous(NULL) == ELIB_FSM_STATE_INVALID);
+    printf("PASSED\n");
+}
+
 int main(void) {
     printf("=== elib-state-machine (switch/case) tests ===\n\n");
 
@@ -232,6 +256,8 @@ int main(void) {
     test_current_null_ctx();
     test_current_uninitialized();
     test_current_during_delay();
+    test_previous();
+    test_previous_null_ctx();
 
     printf("\n=== All tests passed ===\n");
     return 0;

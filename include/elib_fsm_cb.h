@@ -52,9 +52,16 @@ elib_fsm_state_t elib_fsm_cb_poll(elib_fsm_cb_ctx_t *ctx, uint32_t period_ms);
 /**
  * @brief Get current state
  * @param ctx Context pointer
- * @return Current state, or ELIB_FSM_STATE_INVALID if ctx is NULL/uninitialized
+ * @return Current state, or ELIB_FSM_STATE_INVALID if ctx is NULL/uninitialized/delayed
  */
 elib_fsm_state_t elib_fsm_cb_current(const elib_fsm_cb_ctx_t *ctx);
+
+/**
+ * @brief Get last valid state (never returns ELIB_FSM_STATE_INVALID during delay)
+ * @param ctx Context pointer
+ * @return Last valid state, or ELIB_FSM_STATE_INVALID if ctx is NULL/uninitialized
+ */
+elib_fsm_state_t elib_fsm_cb_previous(const elib_fsm_cb_ctx_t *ctx);
 
 #ifdef __cplusplus
 }
