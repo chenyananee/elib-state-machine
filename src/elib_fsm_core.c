@@ -76,5 +76,8 @@ elib_fsm_state_t elib_fsm_current(const elib_fsm_ctx_t *ctx) {
     if (ctx == NULL || !ctx->initialized) {
         return ELIB_FSM_STATE_INVALID;
     }
+    if (ctx->delayed_target != ELIB_FSM_STATE_INVALID) {
+        return ELIB_FSM_STATE_INVALID;
+    }
     return ctx->current;
 }
