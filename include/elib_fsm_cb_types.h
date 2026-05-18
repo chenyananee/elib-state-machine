@@ -26,6 +26,7 @@ typedef struct {
 /* Callback state machine context (user-allocated) */
 typedef struct {
     elib_fsm_state_t current;                             /* Current state */
+    elib_fsm_state_t previous;                            /* Last valid state before transition */
     elib_fsm_state_t delayed_target;                      /* Delayed target, ELIB_FSM_STATE_INVALID = none */
     uint32_t delayed_remaining;                           /* Remaining ms for delayed transition */
     const elib_fsm_cb_state_desc_t *states;               /* State descriptor table */

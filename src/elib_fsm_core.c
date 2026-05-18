@@ -13,6 +13,7 @@ elib_fsm_err_t elib_fsm_init(elib_fsm_ctx_t *ctx,
 
     ctx->initial = initial;
     ctx->current = initial;
+    ctx->previous = initial;
     ctx->delayed_target = ELIB_FSM_STATE_INVALID;
     ctx->initialized = 1;
 
@@ -39,6 +40,7 @@ elib_fsm_err_t elib_fsm_goto(elib_fsm_ctx_t *ctx,
     }
 
     if (delay_ms == 0) {
+        ctx->previous = ctx->current;
         ctx->current = target;
         ctx->delayed_target = ELIB_FSM_STATE_INVALID;
         ctx->delayed_remaining = 0;
@@ -61,6 +63,7 @@ elib_fsm_state_t elib_fsm_poll(elib_fsm_ctx_t *ctx, uint32_t period_ms) {
     }
 
     if (ctx->delayed_remaining <= period_ms) {
+        ctx->previous = ctx->current;
         ctx->current = ctx->delayed_target;
         ctx->delayed_target = ELIB_FSM_STATE_INVALID;
         ctx->delayed_remaining = 0;
@@ -86,5 +89,5 @@ elib_fsm_state_t elib_fsm_previous(const elib_fsm_ctx_t *ctx) {
     if (ctx == NULL || !ctx->initialized) {
         return ELIB_FSM_STATE_INVALID;
     }
-    return ctx->current;
+    return ctx->previous;
 }

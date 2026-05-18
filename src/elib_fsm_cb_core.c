@@ -30,6 +30,7 @@ elib_fsm_err_t elib_fsm_cb_init(elib_fsm_cb_ctx_t *ctx,
     ctx->states = states;
     ctx->state_count = state_count;
     ctx->current = initial;
+    ctx->previous = initial;
     ctx->delayed_target = ELIB_FSM_STATE_INVALID;
     ctx->user_data = user_data;
     ctx->initialized = 1;
@@ -76,7 +77,8 @@ elib_fsm_err_t elib_fsm_cb_goto(elib_fsm_cb_ctx_t *ctx,
         /* Cancel any pending delay */
         ctx->delayed_target = ELIB_FSM_STATE_INVALID;
         ctx->delayed_remaining = 0;
-        /* Set current and call entry */
+        /* Set previous and current, then call entry */
+        ctx->previous = ctx->current;
         ctx->current = target;
         const elib_fsm_cb_state_desc_t *dst_desc = elib_fsm_cb_find_state(
             ctx->states, ctx->state_count, target);
@@ -109,6 +111,7 @@ elib_fsm_state_t elib_fsm_cb_poll(elib_fsm_cb_ctx_t *ctx, uint32_t period_ms) {
     if (ctx->delayed_target != ELIB_FSM_STATE_INVALID) {
         if (ctx->delayed_remaining <= period_ms) {
             /* Expired — transition to delayed target */
+            ctx->previous = ctx->current;
             ctx->current = ctx->delayed_target;
             ctx->delayed_target = ELIB_FSM_STATE_INVALID;
             ctx->delayed_remaining = 0;
@@ -151,5 +154,5 @@ elib_fsm_state_t elib_fsm_cb_previous(const elib_fsm_cb_ctx_t *ctx) {
     if (ctx == NULL || !ctx->initialized) {
         return ELIB_FSM_STATE_INVALID;
     }
-    return ctx->current;
+    return ctx->previous;
 }

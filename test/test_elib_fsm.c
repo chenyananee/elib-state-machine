@@ -214,18 +214,26 @@ static void test_current_during_delay(void) {
 }
 
 static void test_previous(void) {
-    printf("Test: previous returns last valid state during delay... ");
+    printf("Test: previous returns last valid state across transitions... ");
     reset_test();
 
     assert(elib_fsm_previous(&test_ctx) == STATE_IDLE);
 
+    /* Delayed: previous stays IDLE */
     elib_fsm_goto(&test_ctx, STATE_ACTIVE, 100);
     assert(elib_fsm_previous(&test_ctx) == STATE_IDLE);
 
     elib_fsm_poll(&test_ctx, 50);
     assert(elib_fsm_previous(&test_ctx) == STATE_IDLE);
 
+    /* Delay expires, current=ACTIVE, previous=IDLE */
     elib_fsm_poll(&test_ctx, 50);
+    assert(elib_fsm_current(&test_ctx) == STATE_ACTIVE);
+    assert(elib_fsm_previous(&test_ctx) == STATE_IDLE);
+
+    /* Immediate: previous becomes ACTIVE */
+    elib_fsm_goto(&test_ctx, STATE_ERROR, 0);
+    assert(elib_fsm_current(&test_ctx) == STATE_ERROR);
     assert(elib_fsm_previous(&test_ctx) == STATE_ACTIVE);
 
     printf("PASSED\n");

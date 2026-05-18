@@ -20,6 +20,7 @@ typedef int elib_fsm_event_t;
 /* Switch/case context (user-allocated) */
 typedef struct {
     elib_fsm_state_t current;           /* Current state */
+    elib_fsm_state_t previous;          /* Last valid state before transition */
     elib_fsm_state_t initial;           /* Initial state */
     elib_fsm_state_t delayed_target;    /* Delayed target, ELIB_FSM_STATE_INVALID = none */
     uint32_t delayed_remaining;         /* Remaining ms for delayed transition */
