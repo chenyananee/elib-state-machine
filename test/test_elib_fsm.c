@@ -24,7 +24,7 @@ static void test_init_valid(void) {
 
     elib_fsm_err_t err = elib_fsm_init(&test_ctx, STATE_IDLE);
     assert(err == ELIB_FSM_OK);
-    assert(test_ctx.initialized == 1);
+    assert(test_ctx.bit_flags.initialized == 1);
     assert(test_ctx.current == STATE_IDLE);
     assert(test_ctx.initial == STATE_IDLE);
     assert(test_ctx.delayed_target == ELIB_FSM_STATE_INVALID);

@@ -120,7 +120,7 @@ elib_fsm_err_t elib_fsm_hsm_init(elib_fsm_hsm_ctx_t *ctx,
         return ELIB_FSM_ERR_STATE_NOT_FOUND;
     }
     ctx->current = leaf;
-    ctx->initialized = 1;
+    ctx->bit_flags.initialized = 1;
 
     /* Call entry for each state on the path from top-level ancestor down to leaf */
     elib_fsm_state_t path[ELIB_FSM_HSM_MAX_DEPTH];
@@ -147,12 +147,12 @@ void elib_fsm_hsm_deinit(elib_fsm_hsm_ctx_t *ctx) {
     if (ctx == NULL) {
         return;
     }
-    ctx->initialized = 0;
+    ctx->bit_flags.initialized = 0;
 }
 
 /* Get current leaf state */
 elib_fsm_state_t elib_fsm_hsm_current(const elib_fsm_hsm_ctx_t *ctx) {
-    if (ctx == NULL || !ctx->initialized) {
+    if (ctx == NULL || !ctx->bit_flags.initialized) {
         return ELIB_FSM_STATE_INVALID;
     }
     return ctx->current;
@@ -164,7 +164,7 @@ elib_fsm_err_t elib_fsm_hsm_goto(elib_fsm_hsm_ctx_t *ctx,
     if (ctx == NULL) {
         return ELIB_FSM_ERR_INVALID_PARAM;
     }
-    if (!ctx->initialized) {
+    if (!ctx->bit_flags.initialized) {
         return ELIB_FSM_ERR_NOT_INITIALIZED;
     }
 
@@ -197,7 +197,7 @@ elib_fsm_err_t elib_fsm_hsm_goto(elib_fsm_hsm_ctx_t *ctx,
 
 /* Advance one tick: call leaf state's run callback, return current leaf state */
 elib_fsm_state_t elib_fsm_hsm_poll(elib_fsm_hsm_ctx_t *ctx) {
-    if (ctx == NULL || !ctx->initialized) {
+    if (ctx == NULL || !ctx->bit_flags.initialized) {
         return ELIB_FSM_STATE_INVALID;
     }
 
@@ -213,7 +213,7 @@ elib_fsm_state_t elib_fsm_hsm_poll(elib_fsm_hsm_ctx_t *ctx) {
 /* Dispatch event: bubble up active path, return true if handled */
 bool elib_fsm_hsm_dispatch(elib_fsm_hsm_ctx_t *ctx,
                             const elib_fsm_hsm_event_t *event) {
-    if (ctx == NULL || !ctx->initialized || event == NULL) {
+    if (ctx == NULL || !ctx->bit_flags.initialized || event == NULL) {
         return false;
     }
 

@@ -33,7 +33,7 @@ elib_fsm_err_t elib_fsm_cb_init(elib_fsm_cb_ctx_t *ctx,
     ctx->previous = initial;
     ctx->delayed_target = ELIB_FSM_STATE_INVALID;
     ctx->user_data = user_data;
-    ctx->initialized = 1;
+    ctx->bit_flags.initialized = 1;
 
     /* Call entry callback of initial state */
     const elib_fsm_cb_state_desc_t *desc = elib_fsm_cb_find_state(
@@ -50,7 +50,7 @@ void elib_fsm_cb_deinit(elib_fsm_cb_ctx_t *ctx) {
     if (ctx == NULL) {
         return;
     }
-    ctx->initialized = 0;
+    ctx->bit_flags.initialized = 0;
 }
 
 /* Jump to target state, immediate or delayed */
@@ -60,7 +60,7 @@ elib_fsm_err_t elib_fsm_cb_goto(elib_fsm_cb_ctx_t *ctx,
     if (ctx == NULL) {
         return ELIB_FSM_ERR_INVALID_PARAM;
     }
-    if (!ctx->initialized) {
+    if (!ctx->bit_flags.initialized) {
         return ELIB_FSM_ERR_NOT_INITIALIZED;
     }
 
@@ -104,7 +104,7 @@ elib_fsm_err_t elib_fsm_cb_goto(elib_fsm_cb_ctx_t *ctx,
 
 /* Advance one tick, call run callback, and return current state */
 elib_fsm_state_t elib_fsm_cb_poll(elib_fsm_cb_ctx_t *ctx, uint32_t period_ms) {
-    if (ctx == NULL || !ctx->initialized) {
+    if (ctx == NULL || !ctx->bit_flags.initialized) {
         return ELIB_FSM_STATE_INVALID;
     }
 
@@ -140,7 +140,7 @@ elib_fsm_state_t elib_fsm_cb_poll(elib_fsm_cb_ctx_t *ctx, uint32_t period_ms) {
 
 /* Get current state */
 elib_fsm_state_t elib_fsm_cb_current(const elib_fsm_cb_ctx_t *ctx) {
-    if (ctx == NULL || !ctx->initialized) {
+    if (ctx == NULL || !ctx->bit_flags.initialized) {
         return ELIB_FSM_STATE_INVALID;
     }
     if (ctx->delayed_target != ELIB_FSM_STATE_INVALID) {
@@ -151,7 +151,7 @@ elib_fsm_state_t elib_fsm_cb_current(const elib_fsm_cb_ctx_t *ctx) {
 
 /* Get last valid state (never returns INVALID during delay) */
 elib_fsm_state_t elib_fsm_cb_previous(const elib_fsm_cb_ctx_t *ctx) {
-    if (ctx == NULL || !ctx->initialized) {
+    if (ctx == NULL || !ctx->bit_flags.initialized) {
         return ELIB_FSM_STATE_INVALID;
     }
     return ctx->previous;

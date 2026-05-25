@@ -15,7 +15,7 @@ elib_fsm_err_t elib_fsm_init(elib_fsm_ctx_t *ctx,
     ctx->current = initial;
     ctx->previous = initial;
     ctx->delayed_target = ELIB_FSM_STATE_INVALID;
-    ctx->initialized = 1;
+    ctx->bit_flags.initialized = 1;
 
     return ELIB_FSM_OK;
 }
@@ -25,7 +25,7 @@ void elib_fsm_deinit(elib_fsm_ctx_t *ctx) {
     if (ctx == NULL) {
         return;
     }
-    ctx->initialized = 0;
+    ctx->bit_flags.initialized = 0;
 }
 
 /* Jump to target state, immediate or delayed */
@@ -35,7 +35,7 @@ elib_fsm_err_t elib_fsm_goto(elib_fsm_ctx_t *ctx,
     if (ctx == NULL) {
         return ELIB_FSM_ERR_INVALID_PARAM;
     }
-    if (!ctx->initialized) {
+    if (!ctx->bit_flags.initialized) {
         return ELIB_FSM_ERR_NOT_INITIALIZED;
     }
 
@@ -54,7 +54,7 @@ elib_fsm_err_t elib_fsm_goto(elib_fsm_ctx_t *ctx,
 
 /* Advance one tick and return current state */
 elib_fsm_state_t elib_fsm_poll(elib_fsm_ctx_t *ctx, uint32_t period_ms) {
-    if (ctx == NULL || !ctx->initialized) {
+    if (ctx == NULL || !ctx->bit_flags.initialized) {
         return ELIB_FSM_STATE_INVALID;
     }
 
@@ -76,7 +76,7 @@ elib_fsm_state_t elib_fsm_poll(elib_fsm_ctx_t *ctx, uint32_t period_ms) {
 
 /* Get current state */
 elib_fsm_state_t elib_fsm_current(const elib_fsm_ctx_t *ctx) {
-    if (ctx == NULL || !ctx->initialized) {
+    if (ctx == NULL || !ctx->bit_flags.initialized) {
         return ELIB_FSM_STATE_INVALID;
     }
     if (ctx->delayed_target != ELIB_FSM_STATE_INVALID) {
@@ -86,7 +86,7 @@ elib_fsm_state_t elib_fsm_current(const elib_fsm_ctx_t *ctx) {
 }
 
 elib_fsm_state_t elib_fsm_previous(const elib_fsm_ctx_t *ctx) {
-    if (ctx == NULL || !ctx->initialized) {
+    if (ctx == NULL || !ctx->bit_flags.initialized) {
         return ELIB_FSM_STATE_INVALID;
     }
     return ctx->previous;

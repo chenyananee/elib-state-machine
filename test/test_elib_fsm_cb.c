@@ -68,7 +68,7 @@ static void test_init_valid(void) {
     elib_fsm_err_t err = elib_fsm_cb_init(&test_ctx, test_states, TEST_STATE_COUNT,
                                            STATE_IDLE, NULL);
     assert(err == ELIB_FSM_OK);
-    assert(test_ctx.initialized == 1);
+    assert(test_ctx.bit_flags.initialized == 1);
     assert(test_ctx.current == STATE_IDLE);
     assert(test_ctx.delayed_target == ELIB_FSM_STATE_INVALID);
     assert(test_ctx.delayed_remaining == 0);

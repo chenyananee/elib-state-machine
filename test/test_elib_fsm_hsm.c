@@ -157,7 +157,7 @@ static void test_init_valid(void) {
     elib_fsm_err_t err = elib_fsm_hsm_init(&test_ctx, test_states, TEST_STATE_COUNT,
                                              ST_ROOT, NULL);
     assert(err == ELIB_FSM_OK);
-    assert(test_ctx.initialized == 1);
+    assert(test_ctx.bit_flags.initialized == 1);
     assert(test_ctx.current == ST_S1);
     assert(entry_count == 3);
     assert(exit_count == 0);

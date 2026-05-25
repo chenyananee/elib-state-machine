@@ -45,7 +45,9 @@ typedef struct {
     const elib_fsm_hsm_state_desc_t *states;     /* State descriptor table */
     size_t state_count;                          /* Number of state descriptors */
     void *user_data;                             /* User data passed to all callbacks */
-    int initialized;                             /* Initialization flag */
+    struct {
+        uint8_t initialized : 1;
+    } bit_flags;
 } elib_fsm_hsm_ctx_t;
 
 #ifdef __cplusplus

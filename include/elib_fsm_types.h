@@ -24,7 +24,9 @@ typedef struct {
     elib_fsm_state_t initial;           /* Initial state */
     elib_fsm_state_t delayed_target;    /* Delayed target, ELIB_FSM_STATE_INVALID = none */
     uint32_t delayed_remaining;         /* Remaining ms for delayed transition */
-    int initialized;                    /* Initialization flag */
+    struct {
+        uint8_t initialized : 1;
+    } bit_flags;
 } elib_fsm_ctx_t;
 
 #ifdef __cplusplus
