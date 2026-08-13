@@ -14,6 +14,7 @@ extern "C" {
 typedef void (*elib_fsm_cb_entry_fn)(elib_fsm_state_t state, void *user_data);
 typedef void (*elib_fsm_cb_exit_fn)(elib_fsm_state_t state, void *user_data);
 typedef void (*elib_fsm_cb_run_fn)(void *user_data);
+typedef void (*elib_fsm_cb_event_fn)(void *event_data, void *user_data);
 
 /* State descriptor - callbacks per state */
 typedef struct {
@@ -21,6 +22,7 @@ typedef struct {
     elib_fsm_cb_entry_fn entry;       /* Entry callback (nullable) */
     elib_fsm_cb_exit_fn exit;         /* Exit callback (nullable) */
     elib_fsm_cb_run_fn run;           /* Run/loop callback (nullable) */
+    elib_fsm_cb_event_fn event;       /* Poll event callback (nullable) */
 } elib_fsm_cb_state_desc_t;
 
 /* Callback state machine context (user-allocated) */

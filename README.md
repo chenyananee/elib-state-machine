@@ -5,7 +5,7 @@
 ## 特性
 
 - **Switch/Case 状态机** (`elib_fsm`): 轻量级状态跟踪器，支持立即/延迟跳转
-- **回调状态机** (`elib_fsm_cb`): 回调驱动型状态机，支持 entry/exit/run 回调调度与延迟跳转
+- **回调状态机** (`elib_fsm_cb`): 回调驱动型状态机，支持 entry/exit/run/event 回调调度与延迟跳转
 - **层次状态机** (`elib_fsm_hsm`): HSM 层次状态机，支持父子状态、事件冒泡、LCA 跳转语义
 - 零动态内存分配
 - 用户分配上下文
@@ -51,17 +51,18 @@ while (1) {
 static void on_entry(elib_fsm_state_t state, void *user_data) { /* ... */ }
 static void on_exit(elib_fsm_state_t state, void *user_data) { /* ... */ }
 static void on_run(void *user_data) { /* ... */ }
+static void on_event(void *event_data, void *user_data) { /* ... */ }
 
 static const elib_fsm_cb_state_desc_t states[] = {
-    { STATE_IDLE,   on_entry, on_exit, on_run },
-    { STATE_ACTIVE, on_entry, on_exit, on_run },
+    { STATE_IDLE,   on_entry, on_exit, on_run, on_event },
+    { STATE_ACTIVE, on_entry, on_exit, on_run, on_event },
 };
 
 elib_fsm_cb_ctx_t ctx;
 elib_fsm_cb_init(&ctx, states, 2, STATE_IDLE, NULL);
 
-elib_fsm_cb_goto(&ctx, STATE_ACTIVE, 0);  /* exit(IDLE) -> entry(ACTIVE) */
-elib_fsm_cb_poll(&ctx, 10);              /* 10ms tick，自动调用 on_run */
+elib_fsm_cb_goto(&ctx, STATE_ACTIVE, 0);   /* exit(IDLE) -> entry(ACTIVE) */
+elib_fsm_cb_poll(&ctx, 10, &msg);          /* 10ms tick，先调 on_event(msg)，再调 on_run */
 ```
 
 ### 层次状态机
@@ -189,7 +190,7 @@ elib_fsm_cb_goto(&proto_fsm, PROTO_WAIT_HEADER, 0);
 
 /* 主循环中驱动 */
 while (1) {
-    elib_fsm_cb_poll(&proto_fsm, 10);  /* 10ms tick，自动调用 run 回调 */
+    elib_fsm_cb_poll(&proto_fsm, 10, NULL);  /* 10ms tick，先调 event 回调再调 run 回调 */
 }
 ```
 
@@ -371,7 +372,7 @@ while (1) {
 | `elib_fsm_cb_init(ctx, states, state_count, initial, user_data)` | 初始化，设置状态描述符和初始状态 |
 | `elib_fsm_cb_deinit(ctx)` | 反初始化 |
 | `elib_fsm_cb_goto(ctx, target, delay_ms)` | 跳转状态，delay=0 立即跳转(exit→entry)，delay>0 延迟跳转(exit 立即，entry 延迟) |
-| `elib_fsm_cb_poll(ctx, period_ms)` | 推进一个 tick，返回当前状态；延迟等待中返回 -1；到期时执行 entry；自动调用当前状态 run 回调 |
+| `elib_fsm_cb_poll(ctx, period_ms, event_data)` | 推进一个 tick，返回当前状态；先自动调用当前状态 event 回调（传入 event_data），延迟等待中返回 -1；到期时执行 entry；最后自动调用当前状态 run 回调 |
 | `elib_fsm_cb_current(ctx)` | 获取当前状态 |
 
 ### 层次状态机

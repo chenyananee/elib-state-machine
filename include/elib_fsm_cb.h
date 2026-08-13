@@ -42,12 +42,15 @@ elib_fsm_err_t elib_fsm_cb_goto(elib_fsm_cb_ctx_t *ctx,
                                  uint32_t delay_ms);
 
 /**
- * @brief Advance one tick, call run callback, and return current state
+ * @brief Advance one tick; first call current state's event callback,
+ *        then handle delayed transition and call run callback
  * @param ctx Context pointer
  * @param period_ms Tick period in ms
+ * @param event_data Opaque event data passed to the event callback (nullable)
  * @return Current state, or ELIB_FSM_STATE_INVALID during delay
  */
-elib_fsm_state_t elib_fsm_cb_poll(elib_fsm_cb_ctx_t *ctx, uint32_t period_ms);
+elib_fsm_state_t elib_fsm_cb_poll(elib_fsm_cb_ctx_t *ctx, uint32_t period_ms,
+                                  void *event_data);
 
 /**
  * @brief Get current state
