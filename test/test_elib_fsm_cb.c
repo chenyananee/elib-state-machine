@@ -302,20 +302,22 @@ static void test_poll_calls_run(void) {
 }
 
 static void test_poll_skips_run_during_delay(void) {
-    printf("Test: poll skips run during delayed transition... ");
+    printf("Test: poll skips event and run during delayed transition... ");
     reset_test();
     reset_callback_state();
 
     elib_fsm_cb_goto(&test_ctx, STATE_ACTIVE, 50);
     assert(exit_count == 1);
 
-    /* poll should skip run during delay */
+    /* poll should skip event and run during delay */
     assert(elib_fsm_cb_poll(&test_ctx, 10, NULL) == ELIB_FSM_STATE_INVALID);
+    assert(event_count == 0);
     assert(run_count == 0);
 
-    /* After delay expires, poll should call run */
+    /* After delay expires, poll should call entry, event, run */
     elib_fsm_cb_poll(&test_ctx, 40, NULL);
     assert(entry_count == 1);
+    assert(event_count == 1);
     assert(run_count == 1);
 
     printf("PASSED\n");
@@ -370,7 +372,7 @@ static void test_event_called_before_run(void) {
 }
 
 static void test_event_during_delay(void) {
-    printf("Test: event still fires during delayed transition... ");
+    printf("Test: event skipped during delayed transition... ");
     reset_test();
     reset_callback_state();
 
@@ -378,18 +380,18 @@ static void test_event_during_delay(void) {
     elib_fsm_cb_goto(&test_ctx, STATE_ACTIVE, 50);
     assert(exit_count == 1);
 
-    /* During delay: source state's event fires, run skipped */
+    /* During delay: event and run both skipped */
     elib_fsm_cb_poll(&test_ctx, 20, NULL);
-    assert(event_count == 1);
+    assert(event_count == 0);
     assert(run_count == 0);
-    assert(call_log[0] == 'E');
+    assert(call_log_len == 0);
 
-    /* Expiring tick: event (from IDLE) fires, then entry(ACTIVE), then run */
+    /* Expiring tick: entry(ACTIVE), then event(ACTIVE), then run(ACTIVE) */
     elib_fsm_cb_poll(&test_ctx, 40, NULL);
-    assert(event_count == 2);
+    assert(event_count == 1);
     assert(entry_count == 1);
     assert(run_count == 1);
-    assert(strcmp(call_log, "EER") == 0);
+    assert(strcmp(call_log, "ER") == 0);
 
     printf("PASSED\n");
 }

@@ -109,13 +109,6 @@ elib_fsm_state_t elib_fsm_cb_poll(elib_fsm_cb_ctx_t *ctx, uint32_t period_ms,
         return ELIB_FSM_STATE_INVALID;
     }
 
-    /* Call event callback of current state first */
-    const elib_fsm_cb_state_desc_t *curr_desc = elib_fsm_cb_find_state(
-        ctx->states, ctx->state_count, ctx->current);
-    if (curr_desc != NULL && curr_desc->event != NULL) {
-        curr_desc->event(event_data, ctx->user_data);
-    }
-
     if (ctx->delayed_target != ELIB_FSM_STATE_INVALID) {
         if (ctx->delayed_remaining <= period_ms) {
             /* Expired — transition to delayed target */
@@ -133,6 +126,13 @@ elib_fsm_state_t elib_fsm_cb_poll(elib_fsm_cb_ctx_t *ctx, uint32_t period_ms,
         } else {
             ctx->delayed_remaining -= period_ms;
             return ELIB_FSM_STATE_INVALID;
+        }
+    } else {
+        /* No pending delay — call event and run callbacks */
+        const elib_fsm_cb_state_desc_t *curr_desc = elib_fsm_cb_find_state(
+            ctx->states, ctx->state_count, ctx->current);
+        if (curr_desc != NULL && curr_desc->event != NULL) {
+            curr_desc->event(event_data, ctx->user_data);
         }
     }
 

@@ -42,8 +42,8 @@ elib_fsm_err_t elib_fsm_cb_goto(elib_fsm_cb_ctx_t *ctx,
                                  uint32_t delay_ms);
 
 /**
- * @brief Advance one tick; first call current state's event callback,
- *        then handle delayed transition and call run callback
+ * @brief Advance one tick; call event and run callbacks when no delay is pending,
+ *        skip both during delayed transitions, call entry on delay expiration
  * @param ctx Context pointer
  * @param period_ms Tick period in ms
  * @param event_data Opaque event data passed to the event callback (nullable)

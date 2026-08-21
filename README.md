@@ -175,10 +175,10 @@ static void proto_run(void *user_data) {
 }
 
 static const elib_fsm_cb_state_desc_t proto_states[] = {
-    { PROTO_IDLE,        proto_entry, proto_exit, NULL      },
-    { PROTO_WAIT_HEADER, proto_entry, proto_exit, NULL      },
-    { PROTO_RECV_DATA,   proto_entry, proto_exit, proto_run },
-    { PROTO_CHECKSUM,    proto_entry, proto_exit, NULL      },
+    { PROTO_IDLE,        proto_entry, proto_exit, NULL,      NULL },
+    { PROTO_WAIT_HEADER, proto_entry, proto_exit, NULL,      NULL },
+    { PROTO_RECV_DATA,   proto_entry, proto_exit, proto_run, NULL },
+    { PROTO_CHECKSUM,    proto_entry, proto_exit, NULL,      NULL },
 };
 
 proto_data_t proto_data;
@@ -227,10 +227,10 @@ static void pwr_run(void *user_data) {
 }
 
 static const elib_fsm_cb_state_desc_t pwr_states[] = {
-    { PWR_OFF,      pwr_entry, NULL, NULL    },
-    { PWR_STANDBY,  pwr_entry, NULL, pwr_run },
-    { PWR_RUNNING,  pwr_entry, NULL, pwr_run },
-    { PWR_SLEEP,    pwr_entry, NULL, NULL    },
+    { PWR_OFF,      pwr_entry, NULL, NULL,    NULL },
+    { PWR_STANDBY,  pwr_entry, NULL, pwr_run, NULL },
+    { PWR_RUNNING,  pwr_entry, NULL, pwr_run, NULL },
+    { PWR_SLEEP,    pwr_entry, NULL, NULL,    NULL },
 };
 
 power_ctx_t power_data;
@@ -372,8 +372,9 @@ while (1) {
 | `elib_fsm_cb_init(ctx, states, state_count, initial, user_data)` | 初始化，设置状态描述符和初始状态 |
 | `elib_fsm_cb_deinit(ctx)` | 反初始化 |
 | `elib_fsm_cb_goto(ctx, target, delay_ms)` | 跳转状态，delay=0 立即跳转(exit→entry)，delay>0 延迟跳转(exit 立即，entry 延迟) |
-| `elib_fsm_cb_poll(ctx, period_ms, event_data)` | 推进一个 tick，返回当前状态；先自动调用当前状态 event 回调（传入 event_data），延迟等待中返回 -1；到期时执行 entry；最后自动调用当前状态 run 回调 |
+| `elib_fsm_cb_poll(ctx, period_ms, event_data)` | 推进一个 tick，返回当前状态；无延迟时先调用 event 回调再调用 run 回调；延迟等待中跳过 event 和 run，返回 -1；到期时执行 entry，再调用新状态的 event 和 run |
 | `elib_fsm_cb_current(ctx)` | 获取当前状态 |
+| `elib_fsm_cb_previous(ctx)` | 获取上一个有效状态（延迟跳转期间不返回 INVALID） |
 
 ### 层次状态机
 
