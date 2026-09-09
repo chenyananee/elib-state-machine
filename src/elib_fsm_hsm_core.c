@@ -212,8 +212,8 @@ elib_fsm_state_t elib_fsm_hsm_poll(elib_fsm_hsm_ctx_t *ctx) {
 
 /* Dispatch event: bubble up active path, return true if handled */
 bool elib_fsm_hsm_dispatch(elib_fsm_hsm_ctx_t *ctx,
-                            const elib_fsm_hsm_event_t *event) {
-    if (ctx == NULL || !ctx->bit_flags.initialized || event == NULL) {
+                            void *event_data) {
+    if (ctx == NULL || !ctx->bit_flags.initialized) {
         return false;
     }
 
@@ -226,7 +226,7 @@ bool elib_fsm_hsm_dispatch(elib_fsm_hsm_ctx_t *ctx,
         }
 
         elib_fsm_state_t before = ctx->current;
-        bool handled = (desc->handler != NULL) && desc->handler(event, ctx->user_data);
+        bool handled = (desc->handler != NULL) && desc->handler(event_data, ctx->user_data);
 
         /* If goto was called inside handler, stop bubbling */
         if (ctx->current != before) {

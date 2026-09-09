@@ -49,11 +49,11 @@ elib_fsm_state_t elib_fsm_hsm_poll(elib_fsm_hsm_ctx_t *ctx);
 /**
  * @brief Dispatch event: bubble up active path, return true if handled
  * @param ctx Context pointer
- * @param event Event structure pointer
+ * @param event_data Event data pointer (user-defined type, passed to handler)
  * @return true if event was handled by any state, false otherwise
  */
 bool elib_fsm_hsm_dispatch(elib_fsm_hsm_ctx_t *ctx,
-                            const elib_fsm_hsm_event_t *event);
+                            void *event_data);
 
 /**
  * @brief Get current leaf state

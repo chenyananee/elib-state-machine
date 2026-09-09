@@ -1,0 +1,358 @@
+/* elib_fsm_hsm_hist_core.c - Hierarchical State Machine with History Core Implementation */
+#include "elib_fsm_hsm_hist_core.h"
+#include <string.h>
+
+/* --- Internal helpers --- */
+
+/* Find state descriptor by state value */
+elib_fsm_hsm_hist_state_desc_t *elib_fsm_hsm_hist_find_state(
+    elib_fsm_hsm_hist_state_desc_t *states,
+    size_t state_count,
+    elib_fsm_state_t state) {
+    for (size_t i = 0; i < state_count; i++) {
+        if (states[i].state == state) {
+            return &states[i];
+        }
+    }
+    return NULL;
+}
+
+/* Find leaf by following last_active chain (with initial fallback) */
+elib_fsm_state_t elib_fsm_hsm_hist_find_leaf(
+    elib_fsm_hsm_hist_ctx_t *ctx,
+    elib_fsm_state_t state) {
+    elib_fsm_hsm_hist_state_desc_t *desc = elib_fsm_hsm_hist_find_state(
+        ctx->states, ctx->state_count, state);
+    if (desc == NULL) {
+        return ELIB_FSM_STATE_INVALID;
+    }
+
+    /* Leaf: no last_active and no initial */
+    if (desc->last_active == ELIB_FSM_STATE_INVALID &&
+        desc->initial == ELIB_FSM_STATE_INVALID) {
+        return state;
+    }
+
+    /* Prefer last_active, fallback to initial */
+    elib_fsm_state_t child = (desc->last_active != ELIB_FSM_STATE_INVALID)
+                             ? desc->last_active
+                             : desc->initial;
+    return elib_fsm_hsm_hist_find_leaf(ctx, child);
+}
+
+/* Set last_active on path from target up to top-level ancestor */
+void elib_fsm_hsm_hist_set_path(
+    elib_fsm_hsm_hist_ctx_t *ctx,
+    elib_fsm_state_t target,
+    elib_fsm_state_t leaf) {
+    elib_fsm_state_t s = target;
+    while (s != ELIB_FSM_STATE_INVALID) {
+        elib_fsm_hsm_hist_state_desc_t *desc = elib_fsm_hsm_hist_find_state(
+            ctx->states, ctx->state_count, s);
+        if (desc == NULL) {
+            break;
+        }
+        /* Only composite states (have initial) get last_active updated */
+        if (desc->initial != ELIB_FSM_STATE_INVALID) {
+            desc->last_active = leaf;
+        }
+        s = desc->parent;
+    }
+}
+
+/* Compute LCA using hist descriptors */
+static elib_fsm_state_t elib_fsm_hsm_hist_compute_lca(
+    elib_fsm_hsm_hist_ctx_t *ctx,
+    elib_fsm_state_t source,
+    elib_fsm_state_t target) {
+    elib_fsm_state_t t = target;
+    while (t != ELIB_FSM_STATE_INVALID) {
+        elib_fsm_state_t s = source;
+        while (s != ELIB_FSM_STATE_INVALID) {
+            if (s == t) return t;
+            elib_fsm_hsm_hist_state_desc_t *desc = elib_fsm_hsm_hist_find_state(
+                ctx->states, ctx->state_count, s);
+            s = (desc != NULL) ? desc->parent : ELIB_FSM_STATE_INVALID;
+        }
+        elib_fsm_hsm_hist_state_desc_t *desc = elib_fsm_hsm_hist_find_state(
+            ctx->states, ctx->state_count, t);
+        t = (desc != NULL) ? desc->parent : ELIB_FSM_STATE_INVALID;
+    }
+    return ELIB_FSM_STATE_INVALID;
+}
+
+/* Enter path from ancestor down to descendant (exclusive of ancestor, inclusive of descendant) */
+static void elib_fsm_hsm_hist_enter_path(
+    elib_fsm_hsm_hist_ctx_t *ctx,
+    elib_fsm_state_t ancestor,
+    elib_fsm_state_t descendant,
+    void *user_data) {
+    elib_fsm_state_t path[ELIB_FSM_HSM_MAX_DEPTH];
+    int depth = 0;
+    elib_fsm_state_t s = descendant;
+    while (s != ancestor && s != ELIB_FSM_STATE_INVALID && depth < ELIB_FSM_HSM_MAX_DEPTH) {
+        path[depth++] = s;
+        elib_fsm_hsm_hist_state_desc_t *desc = elib_fsm_hsm_hist_find_state(
+            ctx->states, ctx->state_count, s);
+        s = (desc != NULL) ? desc->parent : ELIB_FSM_STATE_INVALID;
+    }
+    for (int i = depth - 1; i >= 0; i--) {
+        elib_fsm_hsm_hist_state_desc_t *desc = elib_fsm_hsm_hist_find_state(
+            ctx->states, ctx->state_count, path[i]);
+        if (desc != NULL && desc->entry != NULL) {
+            desc->entry(path[i], user_data);
+        }
+    }
+}
+
+/* Exit path from descendant up to ancestor (exclusive of ancestor, inclusive of descendant) */
+static void elib_fsm_hsm_hist_exit_path(
+    elib_fsm_hsm_hist_ctx_t *ctx,
+    elib_fsm_state_t descendant,
+    elib_fsm_state_t ancestor,
+    void *user_data) {
+    elib_fsm_state_t s = descendant;
+    while (s != ancestor && s != ELIB_FSM_STATE_INVALID) {
+        elib_fsm_hsm_hist_state_desc_t *desc = elib_fsm_hsm_hist_find_state(
+            ctx->states, ctx->state_count, s);
+        if (desc != NULL && desc->exit != NULL) {
+            desc->exit(s, user_data);
+        }
+        s = (desc != NULL) ? desc->parent : ELIB_FSM_STATE_INVALID;
+    }
+}
+
+/* Initialize entry callbacks for a path */
+static void elib_fsm_hsm_hist_init_entries(
+    elib_fsm_hsm_hist_ctx_t *ctx,
+    elib_fsm_state_t leaf) {
+    elib_fsm_state_t path[ELIB_FSM_HSM_MAX_DEPTH];
+    int depth = 0;
+    elib_fsm_state_t s = leaf;
+    while (s != ELIB_FSM_STATE_INVALID && depth < ELIB_FSM_HSM_MAX_DEPTH) {
+        path[depth++] = s;
+        elib_fsm_hsm_hist_state_desc_t *desc = elib_fsm_hsm_hist_find_state(
+            ctx->states, ctx->state_count, s);
+        s = (desc != NULL) ? desc->parent : ELIB_FSM_STATE_INVALID;
+    }
+    for (int i = depth - 1; i >= 0; i--) {
+        elib_fsm_hsm_hist_state_desc_t *desc = elib_fsm_hsm_hist_find_state(
+            ctx->states, ctx->state_count, path[i]);
+        if (desc != NULL && desc->entry != NULL) {
+            desc->entry(path[i], ctx->user_data);
+        }
+    }
+}
+
+/* --- Public API --- */
+
+/* Initialize hierarchical state machine with history */
+elib_fsm_err_t elib_fsm_hsm_hist_init(elib_fsm_hsm_hist_ctx_t *ctx,
+                                       elib_fsm_hsm_hist_state_desc_t *states,
+                                       size_t state_count,
+                                       elib_fsm_state_t initial,
+                                       void *user_data) {
+    if (ctx == NULL || states == NULL || state_count == 0) {
+        return ELIB_FSM_ERR_INVALID_PARAM;
+    }
+
+    /* Validate initial state exists */
+    if (elib_fsm_hsm_hist_find_state(states, state_count, initial) == NULL) {
+        return ELIB_FSM_ERR_STATE_NOT_FOUND;
+    }
+
+    memset(ctx, 0, sizeof(elib_fsm_hsm_hist_ctx_t));
+
+    /* Set all last_active = initial */
+    for (size_t i = 0; i < state_count; i++) {
+        states[i].last_active = states[i].initial;
+    }
+
+    ctx->states = states;
+    ctx->state_count = state_count;
+    ctx->user_data = user_data;
+
+    /* Follow last_active chain to leaf */
+    elib_fsm_state_t leaf = elib_fsm_hsm_hist_find_leaf(ctx, initial);
+    if (leaf == ELIB_FSM_STATE_INVALID) {
+        return ELIB_FSM_ERR_STATE_NOT_FOUND;
+    }
+    ctx->current = leaf;
+    ctx->bit_flags.initialized = 1;
+
+    /* Call entry for each state on the path from top-level ancestor down to leaf */
+    elib_fsm_hsm_hist_init_entries(ctx, leaf);
+
+    return ELIB_FSM_OK;
+}
+
+/* Deinitialize hierarchical state machine with history */
+void elib_fsm_hsm_hist_deinit(elib_fsm_hsm_hist_ctx_t *ctx) {
+    if (ctx == NULL) {
+        return;
+    }
+    ctx->bit_flags.initialized = 0;
+}
+
+/* Transition to target state (uses last_active to find leaf) */
+elib_fsm_err_t elib_fsm_hsm_hist_goto(elib_fsm_hsm_hist_ctx_t *ctx,
+                                       elib_fsm_state_t target) {
+    if (ctx == NULL) {
+        return ELIB_FSM_ERR_INVALID_PARAM;
+    }
+    if (!ctx->bit_flags.initialized) {
+        return ELIB_FSM_ERR_NOT_INITIALIZED;
+    }
+
+    /* Validate target state exists */
+    if (elib_fsm_hsm_hist_find_state(ctx->states, ctx->state_count, target) == NULL) {
+        return ELIB_FSM_ERR_STATE_NOT_FOUND;
+    }
+
+    elib_fsm_state_t source = ctx->current;
+
+    /* Find target leaf using last_active chain */
+    elib_fsm_state_t leaf = elib_fsm_hsm_hist_find_leaf(ctx, target);
+    if (leaf == ELIB_FSM_STATE_INVALID) {
+        return ELIB_FSM_ERR_STATE_NOT_FOUND;
+    }
+
+    /* If already at target leaf, no-op */
+    if (source == leaf) {
+        return ELIB_FSM_OK;
+    }
+
+    /* Compute LCA */
+    elib_fsm_state_t lca = elib_fsm_hsm_hist_compute_lca(ctx, source, leaf);
+
+    /* Exit from source up to LCA */
+    elib_fsm_hsm_hist_exit_path(ctx, source, lca, ctx->user_data);
+
+    /* Enter from LCA down to leaf */
+    elib_fsm_hsm_hist_enter_path(ctx, lca, leaf, ctx->user_data);
+
+    /* Update last_active on source path (clear history for states we left) */
+    elib_fsm_state_t s = source;
+    while (s != ELIB_FSM_STATE_INVALID && s != lca) {
+        elib_fsm_hsm_hist_state_desc_t *desc = elib_fsm_hsm_hist_find_state(
+            ctx->states, ctx->state_count, s);
+        if (desc == NULL) {
+            break;
+        }
+        s = desc->parent;
+    }
+
+    /* Update last_active on target path */
+    elib_fsm_hsm_hist_set_path(ctx, target, leaf);
+
+    ctx->current = leaf;
+    return ELIB_FSM_OK;
+}
+
+/* Reset: restore all last_active to initial, re-enter initial path */
+elib_fsm_err_t elib_fsm_hsm_hist_reset(elib_fsm_hsm_hist_ctx_t *ctx) {
+    if (ctx == NULL) {
+        return ELIB_FSM_ERR_INVALID_PARAM;
+    }
+    if (!ctx->bit_flags.initialized) {
+        return ELIB_FSM_ERR_NOT_INITIALIZED;
+    }
+
+    /* Restore all last_active = initial */
+    for (size_t i = 0; i < ctx->state_count; i++) {
+        ctx->states[i].last_active = ctx->states[i].initial;
+    }
+
+    /* Find the root state (parent == INVALID) */
+    elib_fsm_state_t root = ELIB_FSM_STATE_INVALID;
+    for (size_t i = 0; i < ctx->state_count; i++) {
+        if (ctx->states[i].parent == ELIB_FSM_STATE_INVALID) {
+            root = ctx->states[i].state;
+            break;
+        }
+    }
+    if (root == ELIB_FSM_STATE_INVALID) {
+        return ELIB_FSM_ERR_STATE_NOT_FOUND;
+    }
+
+    elib_fsm_state_t source = ctx->current;
+
+    /* Find initial leaf using reset last_active */
+    elib_fsm_state_t leaf = elib_fsm_hsm_hist_find_leaf(ctx, root);
+    if (leaf == ELIB_FSM_STATE_INVALID) {
+        return ELIB_FSM_ERR_STATE_NOT_FOUND;
+    }
+
+    /* If already at initial leaf, no-op */
+    if (source == leaf) {
+        return ELIB_FSM_OK;
+    }
+
+    /* Compute LCA */
+    elib_fsm_state_t lca = elib_fsm_hsm_hist_compute_lca(ctx, source, leaf);
+
+    /* Exit from source up to LCA */
+    elib_fsm_hsm_hist_exit_path(ctx, source, lca, ctx->user_data);
+
+    /* Enter from LCA down to leaf */
+    elib_fsm_hsm_hist_enter_path(ctx, lca, leaf, ctx->user_data);
+
+    ctx->current = leaf;
+    return ELIB_FSM_OK;
+}
+
+/* Advance one tick: call leaf state's run callback, return current leaf state */
+elib_fsm_state_t elib_fsm_hsm_hist_poll(elib_fsm_hsm_hist_ctx_t *ctx) {
+    if (ctx == NULL || !ctx->bit_flags.initialized) {
+        return ELIB_FSM_STATE_INVALID;
+    }
+
+    elib_fsm_hsm_hist_state_desc_t *desc = elib_fsm_hsm_hist_find_state(
+        ctx->states, ctx->state_count, ctx->current);
+    if (desc != NULL && desc->run != NULL) {
+        desc->run(ctx->user_data);
+    }
+
+    return ctx->current;
+}
+
+/* Dispatch event: bubble up active path, return true if handled */
+bool elib_fsm_hsm_hist_dispatch(elib_fsm_hsm_hist_ctx_t *ctx,
+                                 void *event_data) {
+    if (ctx == NULL || !ctx->bit_flags.initialized) {
+        return false;
+    }
+
+    elib_fsm_state_t state = ctx->current;
+    while (state != ELIB_FSM_STATE_INVALID) {
+        elib_fsm_hsm_hist_state_desc_t *desc = elib_fsm_hsm_hist_find_state(
+            ctx->states, ctx->state_count, state);
+        if (desc == NULL) {
+            return false;
+        }
+
+        elib_fsm_state_t before = ctx->current;
+        bool handled = (desc->handler != NULL) && desc->handler(event_data, ctx->user_data);
+
+        /* If goto was called inside handler, stop bubbling */
+        if (ctx->current != before) {
+            return true;
+        }
+
+        if (handled) {
+            return true;
+        }
+
+        state = desc->parent;
+    }
+
+    return false;
+}
+
+/* Get current leaf state */
+elib_fsm_state_t elib_fsm_hsm_hist_current(const elib_fsm_hsm_hist_ctx_t *ctx) {
+    if (ctx == NULL || !ctx->bit_flags.initialized) {
+        return ELIB_FSM_STATE_INVALID;
+    }
+    return ctx->current;
+}
