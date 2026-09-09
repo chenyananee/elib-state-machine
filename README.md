@@ -5,7 +5,7 @@
 ## 特性
 
 - **Switch/Case 状态机** (`elib_fsm`): 轻量级状态跟踪器，支持立即/延迟跳转
-- **回调状态机** (`elib_fsm_cb`): 回调驱动型状态机，支持 entry/exit/run/event 回调调度与延迟跳转
+- **回调状态机** (`elib_fsm_cb`): 回调驱动型状态机，支持 entry/exit/run/event 回调调度、按需事件分发与延迟跳转
 - **层次状态机** (`elib_fsm_hsm`): HSM 层次状态机，支持父子状态、事件冒泡、LCA 跳转语义
 - 零动态内存分配
 - 用户分配上下文
@@ -63,6 +63,9 @@ elib_fsm_cb_init(&ctx, states, 2, STATE_IDLE, NULL);
 
 elib_fsm_cb_goto(&ctx, STATE_ACTIVE, 0);   /* exit(IDLE) -> entry(ACTIVE) */
 elib_fsm_cb_poll(&ctx, 10, &msg);          /* 10ms tick，先调 on_event(msg)，再调 on_run */
+
+/* 按需投递外部事件（不触发 run，可多次调用） */
+elib_fsm_cb_dispatch(&ctx, &key_event);    /* 仅调用 on_event(key_event) */
 ```
 
 ### 层次状态机
@@ -373,6 +376,7 @@ while (1) {
 | `elib_fsm_cb_deinit(ctx)` | 反初始化 |
 | `elib_fsm_cb_goto(ctx, target, delay_ms)` | 跳转状态，delay=0 立即跳转(exit→entry)，delay>0 延迟跳转(exit 立即，entry 延迟) |
 | `elib_fsm_cb_poll(ctx, period_ms, event_data)` | 推进一个 tick，返回当前状态；无延迟时先调用 event 回调再调用 run 回调；延迟等待中跳过 event 和 run，返回 -1；到期时执行 entry，再调用新状态的 event 和 run |
+| `elib_fsm_cb_dispatch(ctx, event_data)` | 按需投递事件，仅调用当前状态的 event 回调（不触发 run）；延迟等待中跳过；可在一个 tick 内多次调用 |
 | `elib_fsm_cb_current(ctx)` | 获取当前状态 |
 | `elib_fsm_cb_previous(ctx)` | 获取上一个有效状态（延迟跳转期间不返回 INVALID） |
 

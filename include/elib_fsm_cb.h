@@ -53,6 +53,14 @@ elib_fsm_state_t elib_fsm_cb_poll(elib_fsm_cb_ctx_t *ctx, uint32_t period_ms,
                                   void *event_data);
 
 /**
+ * @brief Dispatch an event to the current state's event callback
+ * @param ctx Context pointer
+ * @param event_data Opaque event data passed to the event callback (nullable)
+ * @return elib_fsm_err_t error code
+ */
+elib_fsm_err_t elib_fsm_cb_dispatch(elib_fsm_cb_ctx_t *ctx, void *event_data);
+
+/**
  * @brief Get current state
  * @param ctx Context pointer
  * @return Current state, or ELIB_FSM_STATE_INVALID if ctx is NULL/uninitialized/delayed

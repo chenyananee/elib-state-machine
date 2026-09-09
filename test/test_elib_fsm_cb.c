@@ -480,6 +480,113 @@ static void test_previous_null_ctx(void) {
     printf("PASSED\n");
 }
 
+/* --- Dispatch tests --- */
+
+static void test_dispatch_calls_event(void) {
+    printf("Test: dispatch calls current state's event callback... ");
+    reset_test();
+    reset_callback_state();
+
+    int evt = 42;
+    elib_fsm_err_t err = elib_fsm_cb_dispatch(&test_ctx, &evt);
+    assert(err == ELIB_FSM_OK);
+    assert(event_count == 1);
+    assert(last_event_data == &evt);
+
+    printf("PASSED\n");
+}
+
+static void test_dispatch_null_event_data(void) {
+    printf("Test: dispatch with null event_data... ");
+    reset_test();
+    reset_callback_state();
+
+    elib_fsm_err_t err = elib_fsm_cb_dispatch(&test_ctx, NULL);
+    assert(err == ELIB_FSM_OK);
+    assert(event_count == 1);
+    assert(last_event_data == NULL);
+
+    printf("PASSED\n");
+}
+
+static void test_dispatch_does_not_call_run(void) {
+    printf("Test: dispatch does not call run callback... ");
+    reset_test();
+    reset_callback_state();
+
+    elib_fsm_cb_dispatch(&test_ctx, NULL);
+    assert(event_count == 1);
+    assert(run_count == 0);
+
+    printf("PASSED\n");
+}
+
+static void test_dispatch_skips_during_delay(void) {
+    printf("Test: dispatch skips event during delayed transition... ");
+    reset_test();
+    reset_callback_state();
+
+    elib_fsm_cb_goto(&test_ctx, STATE_ACTIVE, 50);
+    assert(exit_count == 1);
+
+    /* Dispatch during delay should be skipped */
+    elib_fsm_err_t err = elib_fsm_cb_dispatch(&test_ctx, NULL);
+    assert(err == ELIB_FSM_OK);
+    assert(event_count == 0);
+
+    printf("PASSED\n");
+}
+
+static void test_dispatch_null_ctx(void) {
+    printf("Test: dispatch with null ctx... ");
+    elib_fsm_err_t err = elib_fsm_cb_dispatch(NULL, NULL);
+    assert(err == ELIB_FSM_ERR_INVALID_PARAM);
+    printf("PASSED\n");
+}
+
+static void test_dispatch_uninitialized(void) {
+    printf("Test: dispatch with uninitialized ctx... ");
+    reset_test();
+    elib_fsm_cb_deinit(&test_ctx);
+
+    elib_fsm_err_t err = elib_fsm_cb_dispatch(&test_ctx, NULL);
+    assert(err == ELIB_FSM_ERR_NOT_INITIALIZED);
+    printf("PASSED\n");
+}
+
+static void test_dispatch_null_event_callback(void) {
+    printf("Test: dispatch skips null event callback... ");
+    reset_test();
+    reset_callback_state();
+
+    /* STATE_ERROR has NULL event */
+    elib_fsm_cb_goto(&test_ctx, STATE_ERROR, 0);
+    assert(entry_count == 1);
+
+    event_count = 0;
+    elib_fsm_err_t err = elib_fsm_cb_dispatch(&test_ctx, NULL);
+    assert(err == ELIB_FSM_OK);
+    assert(event_count == 0);
+
+    printf("PASSED\n");
+}
+
+static void test_dispatch_multiple_times(void) {
+    printf("Test: dispatch can be called multiple times per tick... ");
+    reset_test();
+    reset_callback_state();
+
+    int evt1 = 1, evt2 = 2;
+    elib_fsm_cb_dispatch(&test_ctx, &evt1);
+    elib_fsm_cb_dispatch(&test_ctx, &evt2);
+    elib_fsm_cb_dispatch(&test_ctx, NULL);
+
+    assert(event_count == 3);
+    assert(last_event_data == NULL);  /* last call had NULL */
+
+    printf("PASSED\n");
+}
+
 int main(void) {
     printf("=== elib-state-machine (callback) tests ===\n\n");
 
@@ -506,6 +613,14 @@ int main(void) {
     test_delayed_immediate_during_delay();
     test_previous();
     test_previous_null_ctx();
+    test_dispatch_calls_event();
+    test_dispatch_null_event_data();
+    test_dispatch_does_not_call_run();
+    test_dispatch_skips_during_delay();
+    test_dispatch_null_ctx();
+    test_dispatch_uninitialized();
+    test_dispatch_null_event_callback();
+    test_dispatch_multiple_times();
 
     printf("\n=== All tests passed ===\n");
     return 0;

@@ -146,6 +146,29 @@ elib_fsm_state_t elib_fsm_cb_poll(elib_fsm_cb_ctx_t *ctx, uint32_t period_ms,
     return ctx->current;
 }
 
+/* Dispatch an event to the current state's event callback */
+elib_fsm_err_t elib_fsm_cb_dispatch(elib_fsm_cb_ctx_t *ctx, void *event_data) {
+    if (ctx == NULL) {
+        return ELIB_FSM_ERR_INVALID_PARAM;
+    }
+    if (!ctx->bit_flags.initialized) {
+        return ELIB_FSM_ERR_NOT_INITIALIZED;
+    }
+
+    /* Skip event dispatch during delayed transition */
+    if (ctx->delayed_target != ELIB_FSM_STATE_INVALID) {
+        return ELIB_FSM_OK;
+    }
+
+    const elib_fsm_cb_state_desc_t *desc = elib_fsm_cb_find_state(
+        ctx->states, ctx->state_count, ctx->current);
+    if (desc != NULL && desc->event != NULL) {
+        desc->event(event_data, ctx->user_data);
+    }
+
+    return ELIB_FSM_OK;
+}
+
 /* Get current state */
 elib_fsm_state_t elib_fsm_cb_current(const elib_fsm_cb_ctx_t *ctx) {
     if (ctx == NULL || !ctx->bit_flags.initialized) {
