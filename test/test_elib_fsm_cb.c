@@ -18,6 +18,13 @@ static void *last_event_data;
 static elib_fsm_state_t last_entry_state;
 static elib_fsm_state_t last_exit_state;
 
+/* Transition (critical state) callback tracking */
+static int trans_count;
+static void *last_trans_event;
+static elib_fsm_state_t last_trans_from;
+static elib_fsm_state_t last_trans_to;
+static uint32_t last_trans_remaining;
+
 /* Call order log: 'E'=event, 'R'=run */
 static char call_log[32];
 static size_t call_log_len;
@@ -39,6 +46,11 @@ static void reset_callback_state(void) {
     last_exit_state = -99;
     call_log_len = 0;
     call_log[0] = '\0';
+    trans_count = 0;
+    last_trans_event = NULL;
+    last_trans_from = -99;
+    last_trans_to = -99;
+    last_trans_remaining = 0;
 }
 
 /* Test callbacks */
@@ -67,6 +79,18 @@ static void on_event(void *event_data, void *user_data) {
     log_call('E');
 }
 
+/* Transition (critical state) event callback */
+static void on_transition_event(void *event_data, elib_fsm_state_t from,
+                                elib_fsm_state_t to, uint32_t remaining_ms,
+                                void *user_data) {
+    (void)user_data;
+    trans_count++;
+    last_trans_event = event_data;
+    last_trans_from = from;
+    last_trans_to = to;
+    last_trans_remaining = remaining_ms;
+}
+
 /* State descriptors */
 static const elib_fsm_cb_state_desc_t test_states[] = {
     { STATE_IDLE,   on_entry, on_exit, on_run, on_event },
@@ -80,7 +104,8 @@ static elib_fsm_cb_ctx_t test_ctx;
 static void reset_test(void) {
     memset(&test_ctx, 0, sizeof(test_ctx));
     reset_callback_state();
-    elib_fsm_cb_init(&test_ctx, test_states, TEST_STATE_COUNT, STATE_IDLE, NULL);
+    elib_fsm_cb_init(&test_ctx, test_states, TEST_STATE_COUNT, STATE_IDLE, NULL,
+                     NULL);
 }
 
 /* --- Init tests --- */
@@ -91,7 +116,7 @@ static void test_init_valid(void) {
     reset_callback_state();
 
     elib_fsm_err_t err = elib_fsm_cb_init(&test_ctx, test_states, TEST_STATE_COUNT,
-                                           STATE_IDLE, NULL);
+                                           STATE_IDLE, NULL, NULL);
     assert(err == ELIB_FSM_OK);
     assert(test_ctx.bit_flags.initialized == 1);
     assert(test_ctx.current == STATE_IDLE);
@@ -106,7 +131,7 @@ static void test_init_valid(void) {
 static void test_init_null_ctx(void) {
     printf("Test: init with null ctx... ");
     elib_fsm_err_t err = elib_fsm_cb_init(NULL, test_states, TEST_STATE_COUNT,
-                                           STATE_IDLE, NULL);
+                                           STATE_IDLE, NULL, NULL);
     assert(err == ELIB_FSM_ERR_INVALID_PARAM);
     printf("PASSED\n");
 }
@@ -315,7 +340,8 @@ static void test_poll_skips_run_during_delay(void) {
     assert(run_count == 0);
 
     /* After delay expires, poll should call entry, event, run */
-    elib_fsm_cb_poll(&test_ctx, 40, NULL);
+    int evt = 1;
+    elib_fsm_cb_poll(&test_ctx, 40, &evt);
     assert(entry_count == 1);
     assert(event_count == 1);
     assert(run_count == 1);
@@ -347,13 +373,14 @@ static void test_event_called_each_tick(void) {
     reset_callback_state();
 
     int evt = 42;
+    int evt2 = 43;
     elib_fsm_cb_poll(&test_ctx, 10, &evt);
     assert(event_count == 1);
     assert(last_event_data == &evt);
 
-    elib_fsm_cb_poll(&test_ctx, 10, NULL);
+    elib_fsm_cb_poll(&test_ctx, 10, &evt2);
     assert(event_count == 2);
-    assert(last_event_data == NULL);
+    assert(last_event_data == &evt2);
 
     printf("PASSED\n");
 }
@@ -363,7 +390,8 @@ static void test_event_called_before_run(void) {
     reset_test();
     reset_callback_state();
 
-    elib_fsm_cb_poll(&test_ctx, 10, NULL);
+    int evt = 1;
+    elib_fsm_cb_poll(&test_ctx, 10, &evt);
     assert(event_count == 1);
     assert(run_count == 1);
     assert(strcmp(call_log, "ER") == 0);
@@ -387,7 +415,8 @@ static void test_event_during_delay(void) {
     assert(call_log_len == 0);
 
     /* Expiring tick: entry(ACTIVE), then event(ACTIVE), then run(ACTIVE) */
-    elib_fsm_cb_poll(&test_ctx, 40, NULL);
+    int evt = 1;
+    elib_fsm_cb_poll(&test_ctx, 40, &evt);
     assert(event_count == 1);
     assert(entry_count == 1);
     assert(run_count == 1);
@@ -474,9 +503,75 @@ static void test_previous(void) {
     printf("PASSED\n");
 }
 
+static void test_previous_during_delay(void) {
+    printf("Test: previous is last valid state during delayed transition... ");
+    reset_test();
+    reset_callback_state();
+
+    /* IDLE -> ACTIVE (immediate): previous = IDLE */
+    elib_fsm_cb_goto(&test_ctx, STATE_ACTIVE, 0);
+    assert(elib_fsm_cb_previous(&test_ctx) == STATE_IDLE);
+
+    /* ACTIVE -> ERROR (delayed): exit(ACTIVE) fires immediately, current is
+     * INVALID but previous must be the last valid state (ACTIVE) */
+    elib_fsm_cb_goto(&test_ctx, STATE_ERROR, 100);
+    assert(exit_count == 2);
+    assert(last_exit_state == STATE_ACTIVE);
+    assert(elib_fsm_cb_current(&test_ctx) == ELIB_FSM_STATE_INVALID);
+    assert(elib_fsm_cb_previous(&test_ctx) == STATE_ACTIVE);
+
+    /* Still pending: previous unchanged */
+    assert(elib_fsm_cb_poll(&test_ctx, 50, NULL) == ELIB_FSM_STATE_INVALID);
+    assert(elib_fsm_cb_previous(&test_ctx) == STATE_ACTIVE);
+
+    /* Expires: current = ERROR, previous = ACTIVE */
+    assert(elib_fsm_cb_poll(&test_ctx, 50, NULL) == STATE_ERROR);
+    assert(elib_fsm_cb_previous(&test_ctx) == STATE_ACTIVE);
+
+    printf("PASSED\n");
+}
+
 static void test_previous_null_ctx(void) {
     printf("Test: previous with null ctx... ");
     assert(elib_fsm_cb_previous(NULL) == ELIB_FSM_STATE_INVALID);
+    printf("PASSED\n");
+}
+
+/* --- State validation tests --- */
+
+static void test_init_invalid_initial(void) {
+    printf("Test: init with initial state not in table... ");
+    memset(&test_ctx, 0, sizeof(test_ctx));
+    reset_callback_state();
+
+    elib_fsm_err_t err = elib_fsm_cb_init(&test_ctx, test_states, TEST_STATE_COUNT,
+                                           99, NULL, NULL);
+    assert(err == ELIB_FSM_ERR_STATE_NOT_FOUND);
+    assert(test_ctx.bit_flags.initialized == 0);
+    assert(entry_count == 0);
+
+    printf("PASSED\n");
+}
+
+static void test_goto_invalid_target(void) {
+    printf("Test: goto to state not in table is rejected... ");
+    reset_test();
+    reset_callback_state();
+
+    /* Immediate: rejected, no callbacks, state unchanged */
+    elib_fsm_err_t err = elib_fsm_cb_goto(&test_ctx, 77, 0);
+    assert(err == ELIB_FSM_ERR_STATE_NOT_FOUND);
+    assert(elib_fsm_cb_current(&test_ctx) == STATE_IDLE);
+    assert(exit_count == 0);
+    assert(entry_count == 0);
+
+    /* Delayed: rejected, no exit, no pending delay */
+    err = elib_fsm_cb_goto(&test_ctx, 77, 100);
+    assert(err == ELIB_FSM_ERR_STATE_NOT_FOUND);
+    assert(exit_count == 0);
+    assert(test_ctx.delayed_target == ELIB_FSM_STATE_INVALID);
+    assert(elib_fsm_cb_current(&test_ctx) == STATE_IDLE);
+
     printf("PASSED\n");
 }
 
@@ -497,14 +592,13 @@ static void test_dispatch_calls_event(void) {
 }
 
 static void test_dispatch_null_event_data(void) {
-    printf("Test: dispatch with null event_data... ");
+    printf("Test: dispatch with null event_data is dropped... ");
     reset_test();
     reset_callback_state();
 
     elib_fsm_err_t err = elib_fsm_cb_dispatch(&test_ctx, NULL);
     assert(err == ELIB_FSM_OK);
-    assert(event_count == 1);
-    assert(last_event_data == NULL);
+    assert(event_count == 0);
 
     printf("PASSED\n");
 }
@@ -514,7 +608,8 @@ static void test_dispatch_does_not_call_run(void) {
     reset_test();
     reset_callback_state();
 
-    elib_fsm_cb_dispatch(&test_ctx, NULL);
+    int evt = 1;
+    elib_fsm_cb_dispatch(&test_ctx, &evt);
     assert(event_count == 1);
     assert(run_count == 0);
 
@@ -578,11 +673,169 @@ static void test_dispatch_multiple_times(void) {
 
     int evt1 = 1, evt2 = 2;
     elib_fsm_cb_dispatch(&test_ctx, &evt1);
+    elib_fsm_cb_dispatch(&test_ctx, NULL);   /* null event_data is dropped */
     elib_fsm_cb_dispatch(&test_ctx, &evt2);
-    elib_fsm_cb_dispatch(&test_ctx, NULL);
 
-    assert(event_count == 3);
-    assert(last_event_data == NULL);  /* last call had NULL */
+    assert(event_count == 2);
+    assert(last_event_data == &evt2);
+
+    printf("PASSED\n");
+}
+
+/* --- Transition (critical state) event callback tests --- */
+
+static void test_transition_event_poll_during_delay(void) {
+    printf("Test: poll delivers event to transition callback while delayed... ");
+    elib_fsm_cb_ctx_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    elib_fsm_cb_init(&ctx, test_states, TEST_STATE_COUNT, STATE_IDLE, NULL,
+                     on_transition_event);
+    reset_callback_state();
+
+    int evt = 7;
+    elib_fsm_cb_goto(&ctx, STATE_ACTIVE, 50);
+    assert(exit_count == 1);
+    assert(trans_count == 0);
+
+    assert(elib_fsm_cb_poll(&ctx, 20, &evt) == ELIB_FSM_STATE_INVALID);
+    assert(trans_count == 1);
+    assert(last_trans_event == &evt);
+    assert(last_trans_from == STATE_IDLE);
+    assert(last_trans_to == STATE_ACTIVE);
+    assert(last_trans_remaining == 50);
+    assert(event_count == 0);   /* current state's event callback not used */
+    assert(run_count == 0);     /* run not called during delay */
+
+    printf("PASSED\n");
+}
+
+static void test_transition_event_remaining_decrements(void) {
+    printf("Test: transition callback sees remaining decrease across ticks... ");
+    elib_fsm_cb_ctx_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    elib_fsm_cb_init(&ctx, test_states, TEST_STATE_COUNT, STATE_IDLE, NULL,
+                     on_transition_event);
+    reset_callback_state();
+
+    int evt = 1;
+    elib_fsm_cb_goto(&ctx, STATE_ACTIVE, 50);
+    elib_fsm_cb_poll(&ctx, 20, &evt);
+    assert(last_trans_remaining == 50);
+    elib_fsm_cb_poll(&ctx, 20, &evt);
+    assert(last_trans_remaining == 30);
+    assert(trans_count == 2);
+
+    printf("PASSED\n");
+}
+
+static void test_transition_event_null_event_data_skipped(void) {
+    printf("Test: null event_data skips transition callback while delayed... ");
+    elib_fsm_cb_ctx_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    elib_fsm_cb_init(&ctx, test_states, TEST_STATE_COUNT, STATE_IDLE, NULL,
+                     on_transition_event);
+    reset_callback_state();
+
+    int evt = 1;
+    elib_fsm_cb_goto(&ctx, STATE_ACTIVE, 100);
+
+    /* null event_data: neither poll nor dispatch reaches the callback */
+    assert(elib_fsm_cb_poll(&ctx, 20, NULL) == ELIB_FSM_STATE_INVALID);
+    assert(trans_count == 0);
+    assert(elib_fsm_cb_dispatch(&ctx, NULL) == ELIB_FSM_OK);
+    assert(trans_count == 0);
+
+    /* non-null event_data: callback fires */
+    assert(elib_fsm_cb_poll(&ctx, 20, &evt) == ELIB_FSM_STATE_INVALID);
+    assert(trans_count == 1);
+    assert(last_trans_event == &evt);
+
+    printf("PASSED\n");
+}
+
+static void test_transition_event_dispatch_during_delay(void) {
+    printf("Test: dispatch delivers event to transition callback while delayed... ");
+    elib_fsm_cb_ctx_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    elib_fsm_cb_init(&ctx, test_states, TEST_STATE_COUNT, STATE_IDLE, NULL,
+                     on_transition_event);
+    reset_callback_state();
+
+    int evt = 9;
+    elib_fsm_cb_goto(&ctx, STATE_ACTIVE, 50);
+    elib_fsm_err_t err = elib_fsm_cb_dispatch(&ctx, &evt);
+    assert(err == ELIB_FSM_OK);
+    assert(trans_count == 1);
+    assert(last_trans_event == &evt);
+    assert(last_trans_from == STATE_IDLE);
+    assert(last_trans_to == STATE_ACTIVE);
+    assert(last_trans_remaining == 50);
+    assert(event_count == 0);   /* current state's event callback not used */
+
+    printf("PASSED\n");
+}
+
+static void test_transition_event_null_drops(void) {
+    printf("Test: null transition callback drops events during delay... ");
+    reset_test();               /* initialized with NULL transition callback */
+    reset_callback_state();
+
+    int evt = 5;
+    elib_fsm_cb_goto(&test_ctx, STATE_ACTIVE, 50);
+    assert(elib_fsm_cb_poll(&test_ctx, 20, &evt) == ELIB_FSM_STATE_INVALID);
+    assert(elib_fsm_cb_dispatch(&test_ctx, &evt) == ELIB_FSM_OK);
+    assert(trans_count == 0);
+    assert(event_count == 0);
+    assert(run_count == 0);
+
+    printf("PASSED\n");
+}
+
+static void test_transition_event_not_called_on_expiry(void) {
+    printf("Test: transition callback not called on expiring tick... ");
+    elib_fsm_cb_ctx_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    elib_fsm_cb_init(&ctx, test_states, TEST_STATE_COUNT, STATE_IDLE, NULL,
+                     on_transition_event);
+    reset_callback_state();
+
+    int evt = 3;
+    elib_fsm_cb_goto(&ctx, STATE_ACTIVE, 10);
+    assert(elib_fsm_cb_poll(&ctx, 10, &evt) == STATE_ACTIVE);
+    assert(trans_count == 0);   /* arrival uses the target's normal event */
+    assert(entry_count == 1);
+    assert(event_count == 1);
+    assert(last_event_data == &evt);
+    assert(run_count == 1);
+
+    printf("PASSED\n");
+}
+
+/* --- Null event_data tests --- */
+
+static void test_poll_null_event_skips_event(void) {
+    printf("Test: poll with null event_data skips event but still runs... ");
+    reset_test();
+    reset_callback_state();
+
+    elib_fsm_cb_poll(&test_ctx, 10, NULL);
+    assert(event_count == 0);
+    assert(run_count == 1);
+    assert(call_log_len == 1 && call_log[0] == 'R');
+
+    printf("PASSED\n");
+}
+
+static void test_expiry_null_event_skips_event(void) {
+    printf("Test: expiring tick with null event_data skips event... ");
+    reset_test();
+    reset_callback_state();
+
+    elib_fsm_cb_goto(&test_ctx, STATE_ACTIVE, 10);
+    assert(elib_fsm_cb_poll(&test_ctx, 10, NULL) == STATE_ACTIVE);
+    assert(entry_count == 1);
+    assert(event_count == 0);
+    assert(run_count == 1);
 
     printf("PASSED\n");
 }
@@ -609,10 +862,21 @@ int main(void) {
     test_event_called_before_run();
     test_event_during_delay();
     test_event_null_skipped();
+    test_transition_event_poll_during_delay();
+    test_transition_event_remaining_decrements();
+    test_transition_event_dispatch_during_delay();
+    test_transition_event_null_drops();
+    test_transition_event_not_called_on_expiry();
+    test_transition_event_null_event_data_skipped();
+    test_poll_null_event_skips_event();
+    test_expiry_null_event_skips_event();
     test_poll_null_ctx();
     test_delayed_immediate_during_delay();
     test_previous();
+    test_previous_during_delay();
     test_previous_null_ctx();
+    test_init_invalid_initial();
+    test_goto_invalid_target();
     test_dispatch_calls_event();
     test_dispatch_null_event_data();
     test_dispatch_does_not_call_run();

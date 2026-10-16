@@ -15,7 +15,15 @@ extern "C" {
 /* Event handler callback: returns true if handled (stop propagation), false to bubble up */
 typedef bool (*elib_fsm_hsm_handler_fn)(void *event_data, void *user_data);
 
-/* State descriptor - callbacks and hierarchy per state */
+/* State descriptor - callbacks and hierarchy per state.
+ *
+ * CONSTRAINT (cycles FORBIDDEN): the `parent` links must form a valid acyclic
+ * hierarchy, and the `initial` links must reach a leaf (initial == INVALID)
+ * without repeating a state. A state must never be its own ancestor -- directly
+ * (self reference) or indirectly (mutual references). Cycles are undefined
+ * behavior: they make the library's traversals loop forever.
+ * Hierarchy depth must not exceed ELIB_FSM_HSM_MAX_DEPTH (default 16, see the
+ * internal header); deeper tables are truncated silently. */
 typedef struct {
     elib_fsm_state_t state;                      /* State value */
     elib_fsm_state_t parent;                     /* Parent state, ELIB_FSM_STATE_INVALID = top-level */

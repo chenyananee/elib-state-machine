@@ -1,0 +1,11 @@
+# Build directories
+build/
+build-*/
+cmake-build-*/
+
+# Compiled artifacts (in case of in-source builds)
+*.o
+*.obj
+*.exe
+*.a
+*.lib

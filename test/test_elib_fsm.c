@@ -239,6 +239,31 @@ static void test_previous(void) {
     printf("PASSED\n");
 }
 
+static void test_previous_during_delay(void) {
+    printf("Test: previous is last valid state during delayed transition... ");
+    reset_test();
+
+    /* IDLE -> ACTIVE (immediate): previous = IDLE */
+    elib_fsm_goto(&test_ctx, STATE_ACTIVE, 0);
+    assert(elib_fsm_previous(&test_ctx) == STATE_IDLE);
+
+    /* ACTIVE -> ERROR (delayed): machine is mid-transition, current is
+     * INVALID but previous must be the last valid state (ACTIVE) */
+    elib_fsm_goto(&test_ctx, STATE_ERROR, 100);
+    assert(elib_fsm_current(&test_ctx) == ELIB_FSM_STATE_INVALID);
+    assert(elib_fsm_previous(&test_ctx) == STATE_ACTIVE);
+
+    /* Still pending: previous unchanged */
+    assert(elib_fsm_poll(&test_ctx, 50) == ELIB_FSM_STATE_INVALID);
+    assert(elib_fsm_previous(&test_ctx) == STATE_ACTIVE);
+
+    /* Expires: current = ERROR, previous = ACTIVE */
+    assert(elib_fsm_poll(&test_ctx, 50) == STATE_ERROR);
+    assert(elib_fsm_previous(&test_ctx) == STATE_ACTIVE);
+
+    printf("PASSED\n");
+}
+
 static void test_previous_null_ctx(void) {
     printf("Test: previous with null ctx... ");
     assert(elib_fsm_previous(NULL) == ELIB_FSM_STATE_INVALID);
@@ -265,6 +290,7 @@ int main(void) {
     test_current_uninitialized();
     test_current_during_delay();
     test_previous();
+    test_previous_during_delay();
     test_previous_null_ctx();
 
     printf("\n=== All tests passed ===\n");

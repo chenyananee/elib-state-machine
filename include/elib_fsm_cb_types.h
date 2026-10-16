@@ -16,6 +16,21 @@ typedef void (*elib_fsm_cb_exit_fn)(elib_fsm_state_t state, void *user_data);
 typedef void (*elib_fsm_cb_run_fn)(void *user_data);
 typedef void (*elib_fsm_cb_event_fn)(void *event_data, void *user_data);
 
+/* Transition (critical-state) event callback.
+ *
+ * Called when an event is delivered while a delayed transition is pending
+ * (the machine has already exited the source state and has no active state).
+ *   from         - source state that was exited when the delay started
+ *   to           - pending target state (delayed_target)
+ *   remaining_ms - milliseconds left before the transition fires, taken before
+ *                  the current tick's period is applied
+ * Nullable: when NULL, such events are dropped. */
+typedef void (*elib_fsm_cb_transition_event_fn)(void *event_data,
+                                                 elib_fsm_state_t from,
+                                                 elib_fsm_state_t to,
+                                                 uint32_t remaining_ms,
+                                                 void *user_data);
+
 /* State descriptor - callbacks per state */
 typedef struct {
     elib_fsm_state_t state;           /* State value */
@@ -34,6 +49,7 @@ typedef struct {
     const elib_fsm_cb_state_desc_t *states;               /* State descriptor table */
     size_t state_count;                                   /* Number of state descriptors */
     void *user_data;                                      /* User data passed to all callbacks */
+    elib_fsm_cb_transition_event_fn transition_event;     /* Critical-state event callback (nullable) */
     struct {
         uint8_t initialized : 1;
     } bit_flags;

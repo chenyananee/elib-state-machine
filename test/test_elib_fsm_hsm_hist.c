@@ -85,7 +85,7 @@ static bool on_handler_goto_b2(void *event_data, void *user_data) {
 /* State descriptors (non-const!) */
 static elib_fsm_hsm_hist_state_desc_t test_states[] = {
     /*  state      parent    initial  last_active  entry        exit         run    handler  */
-    {   ST_ROOT,   INVALID,  ST_A,    INVALID,     NULL,        NULL,        NULL,  NULL     },
+    {   ST_ROOT,   INVALID,  ST_A,    INVALID,     on_entry,    on_exit,     NULL,  NULL     },
     {   ST_A,      ST_ROOT,  ST_A1,   INVALID,     on_entry,    on_exit,    NULL,  NULL     },
     {   ST_B,      ST_ROOT,  ST_B1,   INVALID,     on_entry,    on_exit,    NULL,  NULL     },
     {   ST_A1,     ST_A,     INVALID, INVALID,     on_entry,    on_exit,    on_run, NULL    },
@@ -94,6 +94,21 @@ static elib_fsm_hsm_hist_state_desc_t test_states[] = {
     {   ST_B2,     ST_B,     INVALID, INVALID,     on_entry,    on_exit,    on_run, NULL    },
 };
 #define TEST_STATE_COUNT (sizeof(test_states) / sizeof(test_states[0]))
+
+/* Forest fixture: two independent top-level states, for reset-target tests */
+#define F_ROOT1 10
+#define F_ROOT2 20
+#define F_C1    11
+#define F_C2    21
+
+static elib_fsm_hsm_hist_state_desc_t forest_states[] = {
+    /*  state     parent    initial  last_active  entry      exit       run     handler */
+    {   F_ROOT1,  INVALID,  F_C1,    INVALID,     on_entry,  on_exit,   NULL,   NULL    },
+    {   F_ROOT2,  INVALID,  F_C2,    INVALID,     on_entry,  on_exit,   NULL,   NULL    },
+    {   F_C1,     F_ROOT1,  INVALID, INVALID,     on_entry,  on_exit,   on_run, NULL    },
+    {   F_C2,     F_ROOT2,  INVALID, INVALID,     on_entry,  on_exit,   on_run, NULL    },
+};
+#define FOREST_STATE_COUNT (sizeof(forest_states) / sizeof(forest_states[0]))
 
 static elib_fsm_hsm_hist_ctx_t test_ctx;
 
@@ -175,17 +190,37 @@ static void test_uninitialized_context(void) {
 
 /* --- Goto tests --- */
 
-static void test_goto_same_state_noop(void) {
-    printf("Test: goto same state is no-op... ");
+static void test_goto_self_transition(void) {
+    printf("Test: goto self (A1 -> A1) is an external self-transition... ");
     reset_test();
     reset_callback_state();
 
-    /* Already at A1, goto A1 */
+    /* Already at A1, goto A1: exits and re-enters A1 */
     elib_fsm_err_t err = elib_fsm_hsm_hist_goto(&test_ctx, ST_A1);
     assert(err == ELIB_FSM_OK);
     assert(elib_fsm_hsm_hist_current(&test_ctx) == ST_A1);
-    assert(exit_count == 0);
-    assert(entry_count == 0);
+    assert(exit_count == 1);
+    assert(last_exit_state == ST_A1);
+    assert(entry_count == 1);
+    assert(last_entry_state == ST_A1);
+
+    printf("PASSED\n");
+}
+
+static void test_goto_to_ancestor(void) {
+    printf("Test: goto ancestor state (A1 -> A) is an external transition... ");
+    reset_test();
+    reset_callback_state();
+
+    /* Strict-LCA: domain is A's parent (ROOT); A and its child are exited and
+     * re-entered, then A's history restores A1. */
+    elib_fsm_err_t err = elib_fsm_hsm_hist_goto(&test_ctx, ST_A);
+    assert(err == ELIB_FSM_OK);
+    assert(elib_fsm_hsm_hist_current(&test_ctx) == ST_A1);
+    assert(exit_count == 2);
+    assert(last_exit_state == ST_A);
+    assert(entry_count == 2);
+    assert(last_entry_state == ST_A1);
 
     printf("PASSED\n");
 }
@@ -321,7 +356,7 @@ static void test_reset_restores_last_active(void) {
     assert(test_states[2].last_active == ST_B2);
 
     /* Reset */
-    elib_fsm_err_t err = elib_fsm_hsm_hist_reset(&test_ctx);
+    elib_fsm_err_t err = elib_fsm_hsm_hist_reset(&test_ctx, ST_ROOT);
     assert(err == ELIB_FSM_OK);
 
     /* All last_active should be back to initial */
@@ -344,16 +379,61 @@ static void test_reset_transitions_to_initial(void) {
     reset_callback_state();
 
     /* Reset should go back to A1 */
-    elib_fsm_err_t err = elib_fsm_hsm_hist_reset(&test_ctx);
+    elib_fsm_err_t err = elib_fsm_hsm_hist_reset(&test_ctx, ST_ROOT);
     assert(err == ELIB_FSM_OK);
     assert(elib_fsm_hsm_hist_current(&test_ctx) == ST_A1);
 
     printf("PASSED\n");
 }
 
+static void test_reset_to_chosen_state(void) {
+    printf("Test: reset(target) stays in the chosen subtree (forest)... ");
+    memset(&test_ctx, 0, sizeof(test_ctx));
+    reset_callback_state();
+
+    /* Two independent roots; initialize into ROOT2's subtree */
+    elib_fsm_hsm_hist_init(&test_ctx, forest_states, FOREST_STATE_COUNT, F_ROOT2, NULL);
+    assert(elib_fsm_hsm_hist_current(&test_ctx) == F_C2);
+
+    /* Reset into ROOT2 (the chosen state), NOT the first table entry (ROOT1) */
+    elib_fsm_err_t err = elib_fsm_hsm_hist_reset(&test_ctx, F_ROOT2);
+    assert(err == ELIB_FSM_OK);
+    assert(elib_fsm_hsm_hist_current(&test_ctx) == F_C2);
+
+    printf("PASSED\n");
+}
+
+static void test_reset_to_leaf_updates_ancestors(void) {
+    printf("Test: reset(leaf) updates ancestor last_active... ");
+    reset_test();
+    reset_callback_state();
+
+    /* Move history into the B branch */
+    elib_fsm_hsm_hist_goto(&test_ctx, ST_B2);
+    assert(elib_fsm_hsm_hist_current(&test_ctx) == ST_B2);
+    assert(test_states[0].last_active == ST_B);
+
+    /* Reset into leaf A2: A.last_active must become A2, not A1 */
+    elib_fsm_err_t err = elib_fsm_hsm_hist_reset(&test_ctx, ST_A2);
+    assert(err == ELIB_FSM_OK);
+    assert(elib_fsm_hsm_hist_current(&test_ctx) == ST_A2);
+    assert(test_states[1].last_active == ST_A2);   /* A.last_active = A2 */
+    assert(test_states[0].last_active == ST_A);    /* ROOT.last_active = A */
+
+    printf("PASSED\n");
+}
+
+static void test_reset_state_not_found(void) {
+    printf("Test: reset with non-existent target... ");
+    reset_test();
+    elib_fsm_err_t err = elib_fsm_hsm_hist_reset(&test_ctx, 99);
+    assert(err == ELIB_FSM_ERR_STATE_NOT_FOUND);
+    printf("PASSED\n");
+}
+
 static void test_reset_null_ctx(void) {
     printf("Test: reset with null ctx... ");
-    elib_fsm_err_t err = elib_fsm_hsm_hist_reset(NULL);
+    elib_fsm_err_t err = elib_fsm_hsm_hist_reset(NULL, ST_ROOT);
     assert(err == ELIB_FSM_ERR_INVALID_PARAM);
     printf("PASSED\n");
 }
@@ -461,7 +541,8 @@ int main(void) {
     test_init_null_ctx();
     test_deinit_null();
     test_uninitialized_context();
-    test_goto_same_state_noop();
+    test_goto_self_transition();
+    test_goto_to_ancestor();
     test_goto_updates_last_active();
     test_goto_restores_history();
     test_goto_sibling();
@@ -471,6 +552,9 @@ int main(void) {
     test_goto_after_multiple_transitions();
     test_reset_restores_last_active();
     test_reset_transitions_to_initial();
+    test_reset_to_chosen_state();
+    test_reset_to_leaf_updates_ancestors();
+    test_reset_state_not_found();
     test_reset_null_ctx();
     test_poll_calls_run();
     test_poll_null_ctx();

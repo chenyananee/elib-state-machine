@@ -4,8 +4,17 @@
 
 #include "../include/elib_fsm_hsm.h"
 
-/* Maximum hierarchy depth for stack-allocated path arrays */
+/* Maximum hierarchy depth for stack-allocated path arrays.
+ *
+ * Overridable from OUTSIDE: if ELIB_FSM_HSM_MAX_DEPTH is already defined (e.g.
+ * via a compiler flag -DELIB_FSM_HSM_MAX_DEPTH=32), that value is used. Do NOT
+ * edit this file (or any library file) to change it.
+ *
+ * A state table whose hierarchy is deeper than this value is truncated
+ * silently: the entry callbacks nearest the root are skipped. */
+#ifndef ELIB_FSM_HSM_MAX_DEPTH
 #define ELIB_FSM_HSM_MAX_DEPTH 16
+#endif
 
 /* Internal: find state descriptor by state value */
 const elib_fsm_hsm_state_desc_t *elib_fsm_hsm_find_state(
@@ -19,8 +28,8 @@ elib_fsm_state_t elib_fsm_hsm_find_leaf(
     size_t state_count,
     elib_fsm_state_t state);
 
-/* Internal: compute lowest common ancestor of two states */
-elib_fsm_state_t elib_fsm_hsm_compute_lca(
+/* Internal: compute the transition domain (strict-LCA) of source and target */
+elib_fsm_state_t elib_fsm_hsm_compute_domain(
     const elib_fsm_hsm_state_desc_t *states,
     size_t state_count,
     elib_fsm_state_t source,

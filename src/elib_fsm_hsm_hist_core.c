@@ -40,43 +40,69 @@ elib_fsm_state_t elib_fsm_hsm_hist_find_leaf(
     return elib_fsm_hsm_hist_find_leaf(ctx, child);
 }
 
-/* Set last_active on path from target up to top-level ancestor */
+/* Record, for every composite on the path to `leaf`, which immediate child
+ * leads to it. This matches init's convention (last_active = immediate child)
+ * and keeps find_leaf's last_active-first descent correct. */
 void elib_fsm_hsm_hist_set_path(
     elib_fsm_hsm_hist_ctx_t *ctx,
     elib_fsm_state_t target,
     elib_fsm_state_t leaf) {
-    elib_fsm_state_t s = target;
-    while (s != ELIB_FSM_STATE_INVALID) {
+    (void)target; /* `leaf` alone identifies the path */
+    elib_fsm_state_t child = leaf;
+    while (child != ELIB_FSM_STATE_INVALID) {
         elib_fsm_hsm_hist_state_desc_t *desc = elib_fsm_hsm_hist_find_state(
-            ctx->states, ctx->state_count, s);
+            ctx->states, ctx->state_count, child);
         if (desc == NULL) {
             break;
         }
-        /* Only composite states (have initial) get last_active updated */
-        if (desc->initial != ELIB_FSM_STATE_INVALID) {
-            desc->last_active = leaf;
+        elib_fsm_state_t parent = desc->parent;
+        if (parent == ELIB_FSM_STATE_INVALID) {
+            break;
         }
-        s = desc->parent;
+        elib_fsm_hsm_hist_state_desc_t *pd = elib_fsm_hsm_hist_find_state(
+            ctx->states, ctx->state_count, parent);
+        /* Only composite states (have initial) track history */
+        if (pd != NULL && pd->initial != ELIB_FSM_STATE_INVALID) {
+            pd->last_active = child;
+        }
+        child = parent;
     }
 }
 
-/* Compute LCA using hist descriptors */
-static elib_fsm_state_t elib_fsm_hsm_hist_compute_lca(
+/* Is `anc` a strict ancestor of `state` (lies on state's parent chain)? */
+static bool elib_fsm_hsm_hist_is_strict_ancestor(
+    elib_fsm_hsm_hist_ctx_t *ctx,
+    elib_fsm_state_t anc,
+    elib_fsm_state_t state) {
+    elib_fsm_hsm_hist_state_desc_t *desc = elib_fsm_hsm_hist_find_state(
+        ctx->states, ctx->state_count, state);
+    elib_fsm_state_t p = (desc != NULL) ? desc->parent : ELIB_FSM_STATE_INVALID;
+    while (p != ELIB_FSM_STATE_INVALID) {
+        if (p == anc) {
+            return true;
+        }
+        desc = elib_fsm_hsm_hist_find_state(ctx->states, ctx->state_count, p);
+        p = (desc != NULL) ? desc->parent : ELIB_FSM_STATE_INVALID;
+    }
+    return false;
+}
+
+/* Compute the transition domain: lowest strict ancestor of source that is also
+ * a strict ancestor of target. Same semantics as elib_fsm_hsm_compute_domain;
+ * INVALID means "no common ancestor -> exit/enter the whole configuration". */
+static elib_fsm_state_t elib_fsm_hsm_hist_compute_domain(
     elib_fsm_hsm_hist_ctx_t *ctx,
     elib_fsm_state_t source,
     elib_fsm_state_t target) {
-    elib_fsm_state_t t = target;
-    while (t != ELIB_FSM_STATE_INVALID) {
-        elib_fsm_state_t s = source;
-        while (s != ELIB_FSM_STATE_INVALID) {
-            if (s == t) return t;
-            elib_fsm_hsm_hist_state_desc_t *desc = elib_fsm_hsm_hist_find_state(
-                ctx->states, ctx->state_count, s);
-            s = (desc != NULL) ? desc->parent : ELIB_FSM_STATE_INVALID;
+    elib_fsm_hsm_hist_state_desc_t *desc = elib_fsm_hsm_hist_find_state(
+        ctx->states, ctx->state_count, source);
+    elib_fsm_state_t anc = (desc != NULL) ? desc->parent : ELIB_FSM_STATE_INVALID;
+    while (anc != ELIB_FSM_STATE_INVALID) {
+        if (elib_fsm_hsm_hist_is_strict_ancestor(ctx, anc, target)) {
+            return anc;
         }
-        elib_fsm_hsm_hist_state_desc_t *desc = elib_fsm_hsm_hist_find_state(
-            ctx->states, ctx->state_count, t);
-        t = (desc != NULL) ? desc->parent : ELIB_FSM_STATE_INVALID;
+        desc = elib_fsm_hsm_hist_find_state(ctx->states, ctx->state_count, anc);
+        anc = (desc != NULL) ? desc->parent : ELIB_FSM_STATE_INVALID;
     }
     return ELIB_FSM_STATE_INVALID;
 }
@@ -211,46 +237,39 @@ elib_fsm_err_t elib_fsm_hsm_hist_goto(elib_fsm_hsm_hist_ctx_t *ctx,
 
     elib_fsm_state_t source = ctx->current;
 
-    /* Find target leaf using last_active chain */
+    /* Resolve the effective target leaf: last_active (history) first, else initial */
     elib_fsm_state_t leaf = elib_fsm_hsm_hist_find_leaf(ctx, target);
     if (leaf == ELIB_FSM_STATE_INVALID) {
         return ELIB_FSM_ERR_STATE_NOT_FOUND;
     }
 
-    /* If already at target leaf, no-op */
-    if (source == leaf) {
-        return ELIB_FSM_OK;
+    /* External transition: domain = strict LCA of source and the requested
+     * target (INVALID => no common ancestor, exit/enter whole configuration).
+     * A transition to the current state or to an ancestor is external, so the
+     * target is exited and re-entered. */
+    elib_fsm_state_t domain = elib_fsm_hsm_hist_compute_domain(ctx, source, target);
+
+    /* Exit from source up to the domain */
+    elib_fsm_hsm_hist_exit_path(ctx, source, domain, ctx->user_data);
+
+    /* Enter from the domain down to the requested target */
+    elib_fsm_hsm_hist_enter_path(ctx, domain, target, ctx->user_data);
+
+    /* If the target is composite, descend to its effective (history) leaf */
+    if (leaf != target) {
+        elib_fsm_hsm_hist_enter_path(ctx, target, leaf, ctx->user_data);
     }
 
-    /* Compute LCA */
-    elib_fsm_state_t lca = elib_fsm_hsm_hist_compute_lca(ctx, source, leaf);
-
-    /* Exit from source up to LCA */
-    elib_fsm_hsm_hist_exit_path(ctx, source, lca, ctx->user_data);
-
-    /* Enter from LCA down to leaf */
-    elib_fsm_hsm_hist_enter_path(ctx, lca, leaf, ctx->user_data);
-
-    /* Update last_active on source path (clear history for states we left) */
-    elib_fsm_state_t s = source;
-    while (s != ELIB_FSM_STATE_INVALID && s != lca) {
-        elib_fsm_hsm_hist_state_desc_t *desc = elib_fsm_hsm_hist_find_state(
-            ctx->states, ctx->state_count, s);
-        if (desc == NULL) {
-            break;
-        }
-        s = desc->parent;
-    }
-
-    /* Update last_active on target path */
+    /* Record history along the target path */
     elib_fsm_hsm_hist_set_path(ctx, target, leaf);
 
     ctx->current = leaf;
     return ELIB_FSM_OK;
 }
 
-/* Reset: restore all last_active to initial, re-enter initial path */
-elib_fsm_err_t elib_fsm_hsm_hist_reset(elib_fsm_hsm_hist_ctx_t *ctx) {
+/* Reset: clear history (all last_active = initial) and re-enter `target` */
+elib_fsm_err_t elib_fsm_hsm_hist_reset(elib_fsm_hsm_hist_ctx_t *ctx,
+                                        elib_fsm_state_t target) {
     if (ctx == NULL) {
         return ELIB_FSM_ERR_INVALID_PARAM;
     }
@@ -258,44 +277,42 @@ elib_fsm_err_t elib_fsm_hsm_hist_reset(elib_fsm_hsm_hist_ctx_t *ctx) {
         return ELIB_FSM_ERR_NOT_INITIALIZED;
     }
 
-    /* Restore all last_active = initial */
+    /* Validate target state exists */
+    if (elib_fsm_hsm_hist_find_state(ctx->states, ctx->state_count, target) == NULL) {
+        return ELIB_FSM_ERR_STATE_NOT_FOUND;
+    }
+
+    /* Clear history: every state falls back to its initial substate */
     for (size_t i = 0; i < ctx->state_count; i++) {
         ctx->states[i].last_active = ctx->states[i].initial;
     }
 
-    /* Find the root state (parent == INVALID) */
-    elib_fsm_state_t root = ELIB_FSM_STATE_INVALID;
-    for (size_t i = 0; i < ctx->state_count; i++) {
-        if (ctx->states[i].parent == ELIB_FSM_STATE_INVALID) {
-            root = ctx->states[i].state;
-            break;
-        }
-    }
-    if (root == ELIB_FSM_STATE_INVALID) {
-        return ELIB_FSM_ERR_STATE_NOT_FOUND;
-    }
-
-    elib_fsm_state_t source = ctx->current;
-
-    /* Find initial leaf using reset last_active */
-    elib_fsm_state_t leaf = elib_fsm_hsm_hist_find_leaf(ctx, root);
+    /* Resolve the target's clean leaf via the freshly restored initial chains */
+    elib_fsm_state_t leaf = elib_fsm_hsm_hist_find_leaf(ctx, target);
     if (leaf == ELIB_FSM_STATE_INVALID) {
         return ELIB_FSM_ERR_STATE_NOT_FOUND;
     }
 
-    /* If already at initial leaf, no-op */
+    /* Record history along the target path: ancestors above the transition
+     * domain are not exited/re-entered, so their last_active must be pointed at
+     * the new branch explicitly. */
+    elib_fsm_hsm_hist_set_path(ctx, target, leaf);
+
+    elib_fsm_state_t source = ctx->current;
+
+    /* Already at the resolved leaf: history cleared/recorded, nothing to do */
     if (source == leaf) {
         return ELIB_FSM_OK;
     }
 
-    /* Compute LCA */
-    elib_fsm_state_t lca = elib_fsm_hsm_hist_compute_lca(ctx, source, leaf);
+    /* Compute transition domain (strict LCA) */
+    elib_fsm_state_t domain = elib_fsm_hsm_hist_compute_domain(ctx, source, leaf);
 
-    /* Exit from source up to LCA */
-    elib_fsm_hsm_hist_exit_path(ctx, source, lca, ctx->user_data);
+    /* Exit from source up to the domain */
+    elib_fsm_hsm_hist_exit_path(ctx, source, domain, ctx->user_data);
 
-    /* Enter from LCA down to leaf */
-    elib_fsm_hsm_hist_enter_path(ctx, lca, leaf, ctx->user_data);
+    /* Enter from the domain down to the resolved leaf */
+    elib_fsm_hsm_hist_enter_path(ctx, domain, leaf, ctx->user_data);
 
     ctx->current = leaf;
     return ELIB_FSM_OK;
@@ -319,7 +336,8 @@ elib_fsm_state_t elib_fsm_hsm_hist_poll(elib_fsm_hsm_hist_ctx_t *ctx) {
 /* Dispatch event: bubble up active path, return true if handled */
 bool elib_fsm_hsm_hist_dispatch(elib_fsm_hsm_hist_ctx_t *ctx,
                                  void *event_data) {
-    if (ctx == NULL || !ctx->bit_flags.initialized) {
+    /* A null event_data means "no event": nothing is dispatched. */
+    if (ctx == NULL || !ctx->bit_flags.initialized || event_data == NULL) {
         return false;
     }
 

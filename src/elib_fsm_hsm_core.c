@@ -30,23 +30,47 @@ elib_fsm_state_t elib_fsm_hsm_find_leaf(
     return desc != NULL ? desc->state : ELIB_FSM_STATE_INVALID;
 }
 
-/* Compute lowest common ancestor of source and target */
-elib_fsm_state_t elib_fsm_hsm_compute_lca(
+/* Is `anc` a strict ancestor of `state` (i.e. does it lie on state's parent chain)? */
+static bool elib_fsm_hsm_is_strict_ancestor(
+    const elib_fsm_hsm_state_desc_t *states,
+    size_t state_count,
+    elib_fsm_state_t anc,
+    elib_fsm_state_t state) {
+    const elib_fsm_hsm_state_desc_t *desc = elib_fsm_hsm_find_state(states, state_count, state);
+    elib_fsm_state_t p = (desc != NULL) ? desc->parent : ELIB_FSM_STATE_INVALID;
+    while (p != ELIB_FSM_STATE_INVALID) {
+        if (p == anc) {
+            return true;
+        }
+        desc = elib_fsm_hsm_find_state(states, state_count, p);
+        p = (desc != NULL) ? desc->parent : ELIB_FSM_STATE_INVALID;
+    }
+    return false;
+}
+
+/* Compute the transition domain: the lowest strict ancestor of `source` that is
+ * also a strict ancestor of `target` (UML/SCXML least common compound ancestor).
+ *
+ * Because the domain must be a *strict* ancestor, a transition to an ancestor
+ * (or to the current state itself) yields that state's parent as the domain, so
+ * the target is exited and re-entered -- an external transition/self-transition.
+ *
+ * Returns ELIB_FSM_STATE_INVALID when no such ancestor exists (e.g. the target
+ * is a top-level state / the root): the caller then exits the whole active
+ * configuration and re-enters from the top. */
+elib_fsm_state_t elib_fsm_hsm_compute_domain(
     const elib_fsm_hsm_state_desc_t *states,
     size_t state_count,
     elib_fsm_state_t source,
     elib_fsm_state_t target) {
-    /* Walk from target upward; first ancestor that is also an ancestor of source is the LCA */
-    elib_fsm_state_t t = target;
-    while (t != ELIB_FSM_STATE_INVALID) {
-        elib_fsm_state_t s = source;
-        while (s != ELIB_FSM_STATE_INVALID) {
-            if (s == t) return t;
-            const elib_fsm_hsm_state_desc_t *desc = elib_fsm_hsm_find_state(states, state_count, s);
-            s = (desc != NULL) ? desc->parent : ELIB_FSM_STATE_INVALID;
+    const elib_fsm_hsm_state_desc_t *desc = elib_fsm_hsm_find_state(states, state_count, source);
+    elib_fsm_state_t anc = (desc != NULL) ? desc->parent : ELIB_FSM_STATE_INVALID;
+    while (anc != ELIB_FSM_STATE_INVALID) {
+        if (elib_fsm_hsm_is_strict_ancestor(states, state_count, anc, target)) {
+            return anc;
         }
-        const elib_fsm_hsm_state_desc_t *desc = elib_fsm_hsm_find_state(states, state_count, t);
-        t = (desc != NULL) ? desc->parent : ELIB_FSM_STATE_INVALID;
+        desc = elib_fsm_hsm_find_state(states, state_count, anc);
+        anc = (desc != NULL) ? desc->parent : ELIB_FSM_STATE_INVALID;
     }
     return ELIB_FSM_STATE_INVALID;
 }
@@ -158,7 +182,7 @@ elib_fsm_state_t elib_fsm_hsm_current(const elib_fsm_hsm_ctx_t *ctx) {
     return ctx->current;
 }
 
-/* Transition to target state (LCA semantics) */
+/* Transition to target state (external transition, strict-LCA domain) */
 elib_fsm_err_t elib_fsm_hsm_goto(elib_fsm_hsm_ctx_t *ctx,
                                   elib_fsm_state_t target) {
     if (ctx == NULL) {
@@ -175,14 +199,15 @@ elib_fsm_err_t elib_fsm_hsm_goto(elib_fsm_hsm_ctx_t *ctx,
 
     elib_fsm_state_t source = ctx->current;
 
-    /* Compute LCA */
-    elib_fsm_state_t lca = elib_fsm_hsm_compute_lca(ctx->states, ctx->state_count, source, target);
+    /* Compute the transition domain (INVALID = no common ancestor -> whole config) */
+    elib_fsm_state_t domain = elib_fsm_hsm_compute_domain(
+        ctx->states, ctx->state_count, source, target);
 
-    /* Exit from source up to LCA (exclusive) */
-    elib_fsm_hsm_exit_path(ctx->states, ctx->state_count, source, lca, ctx->user_data);
+    /* Exit from source up to the domain (exclusive) */
+    elib_fsm_hsm_exit_path(ctx->states, ctx->state_count, source, domain, ctx->user_data);
 
-    /* Enter from LCA down to target (exclusive of LCA, inclusive of target) */
-    elib_fsm_hsm_enter_path(ctx->states, ctx->state_count, lca, target, ctx->user_data);
+    /* Enter from the domain down to target (exclusive of domain, inclusive of target) */
+    elib_fsm_hsm_enter_path(ctx->states, ctx->state_count, domain, target, ctx->user_data);
 
     /* If target is composite, follow initial chain */
     elib_fsm_state_t leaf = elib_fsm_hsm_find_leaf(ctx->states, ctx->state_count, target);
@@ -213,7 +238,8 @@ elib_fsm_state_t elib_fsm_hsm_poll(elib_fsm_hsm_ctx_t *ctx) {
 /* Dispatch event: bubble up active path, return true if handled */
 bool elib_fsm_hsm_dispatch(elib_fsm_hsm_ctx_t *ctx,
                             void *event_data) {
-    if (ctx == NULL || !ctx->bit_flags.initialized) {
+    /* A null event_data means "no event": nothing is dispatched. */
+    if (ctx == NULL || !ctx->bit_flags.initialized || event_data == NULL) {
         return false;
     }
 

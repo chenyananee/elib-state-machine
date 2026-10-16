@@ -13,7 +13,14 @@
 extern "C" {
 #endif
 
-/* State descriptor with history tracking (8 fields) */
+/* State descriptor with history tracking (8 fields).
+ *
+ * CONSTRAINT (cycles FORBIDDEN): `parent`, `initial` and (at runtime)
+ * `last_active` links must all form a valid acyclic hierarchy -- no state may
+ * be its own ancestor, directly or indirectly. Cycles are undefined behavior:
+ * they make the traversals loop forever or overflow the stack (the history leaf
+ * descent is recursive). Hierarchy depth must not exceed ELIB_FSM_HSM_MAX_DEPTH
+ * (default 16); deeper tables are truncated silently. */
 typedef struct {
     elib_fsm_state_t state;                      /* State value */
     elib_fsm_state_t parent;                     /* Parent state, ELIB_FSM_STATE_INVALID = top-level */

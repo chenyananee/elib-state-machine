@@ -6,8 +6,8 @@
 
 - **Switch/Case 状态机** (`elib_fsm`): 轻量级状态跟踪器，支持立即/延迟跳转
 - **回调状态机** (`elib_fsm_cb`): 回调驱动型状态机，支持 entry/exit/run/event 回调调度、按需事件分发与延迟跳转
-- **层次状态机** (`elib_fsm_hsm`): HSM 层次状态机，支持父子状态、事件冒泡、LCA 跳转语义
-- **带历史的层次状态机** (`elib_fsm_hsm_hist`): 带深历史的 HSM，goto 自动恢复上次活跃的子状态
+- **层次状态机** (`elib_fsm_hsm`): HSM 层次状态机，支持父子状态、事件冒泡、外部跳转（严格 LCA 域）语义
+- **带历史的层次状态机** (`elib_fsm_hsm_hist`): 带深历史的 HSM，goto 自动恢复上次活跃的子状态（外部跳转，域语义与标准 HSM 一致）
 - 零动态内存分配
 - 用户分配上下文
 - 四种模式完全解耦，可独立或组合使用
@@ -60,7 +60,8 @@ static const elib_fsm_cb_state_desc_t states[] = {
 };
 
 elib_fsm_cb_ctx_t ctx;
-elib_fsm_cb_init(&ctx, states, 2, STATE_IDLE, NULL);
+/* 最后一个参数为“临界状态”事件回调，可为 NULL（表示临界期事件直接丢弃） */
+elib_fsm_cb_init(&ctx, states, 2, STATE_IDLE, NULL, NULL);
 
 elib_fsm_cb_goto(&ctx, STATE_ACTIVE, 0);   /* exit(IDLE) -> entry(ACTIVE) */
 elib_fsm_cb_poll(&ctx, 10, &msg);          /* 10ms tick，先调 on_event(msg)，再调 on_run */
@@ -136,7 +137,7 @@ elib_fsm_hsm_hist_init(&fsm, states, 7, ST_ROOT, NULL);
 elib_fsm_hsm_hist_goto(&fsm, ST_A2);   /* A.last_active = A2 */
 elib_fsm_hsm_hist_goto(&fsm, ST_B);    /* B 无历史，走 initial -> B1 */
 elib_fsm_hsm_hist_goto(&fsm, ST_A);    /* 恢复到 A2！（A.last_active = A2） */
-elib_fsm_hsm_hist_reset(&fsm);         /* 清除所有历史，回到 A1 */
+elib_fsm_hsm_hist_reset(&fsm, ST_ROOT); /* 清除所有历史，回到 ROOT 的初始叶子 A1 */
 ```
 
 ## 使用案例
@@ -224,7 +225,7 @@ static const elib_fsm_cb_state_desc_t proto_states[] = {
 
 proto_data_t proto_data;
 elib_fsm_cb_ctx_t proto_fsm;
-elib_fsm_cb_init(&proto_fsm, proto_states, 4, PROTO_IDLE, &proto_data);
+elib_fsm_cb_init(&proto_fsm, proto_states, 4, PROTO_IDLE, &proto_data, NULL);
 
 /* 中断中直接跳转状态 */
 elib_fsm_cb_goto(&proto_fsm, PROTO_WAIT_HEADER, 0);
@@ -276,7 +277,7 @@ static const elib_fsm_cb_state_desc_t pwr_states[] = {
 
 power_ctx_t power_data;
 elib_fsm_cb_ctx_t pwr_fsm;
-elib_fsm_cb_init(&pwr_fsm, pwr_states, 4, PWR_OFF, &power_data);
+elib_fsm_cb_init(&pwr_fsm, pwr_states, 4, PWR_OFF, &power_data, NULL);
 ```
 
 ### 媒体播放器（层次状态机）
@@ -410,20 +411,37 @@ while (1) {
 | `elib_fsm_init(ctx, initial)` | 初始化，设置初始状态 |
 | `elib_fsm_deinit(ctx)` | 反初始化 |
 | `elib_fsm_goto(ctx, target, delay_ms)` | 跳转状态，delay=0 立即跳转，delay>0 延迟跳转 |
-| `elib_fsm_poll(ctx, period_ms)` | 推进一个 tick，返回当前状态；延迟等待中返回 -1 |
+| `elib_fsm_poll(ctx, period_ms)` | 推进一个 tick，返回当前状态；延迟等待中返回 -1（`period_ms` 需 > 0 才能推进延迟；0 表示零时间流逝，延迟不推进） |
 | `elib_fsm_current(ctx)` | 获取当前状态 |
+| `elib_fsm_previous(ctx)` | 获取上一个有效状态（延迟跳转期间返回延迟的源状态，不返回 INVALID） |
 
 ### 回调状态机
 
 | 函数 | 说明 |
 |------|------|
-| `elib_fsm_cb_init(ctx, states, state_count, initial, user_data)` | 初始化，设置状态描述符和初始状态 |
+| `elib_fsm_cb_init(ctx, states, state_count, initial, user_data, transition_event)` | 初始化，设置状态描述符、初始状态与临界状态事件回调（`transition_event` 可为 NULL）；`initial` 不在描述符表中时返回 `ELIB_FSM_ERR_STATE_NOT_FOUND`（不修改 ctx） |
 | `elib_fsm_cb_deinit(ctx)` | 反初始化 |
-| `elib_fsm_cb_goto(ctx, target, delay_ms)` | 跳转状态，delay=0 立即跳转(exit→entry)，delay>0 延迟跳转(exit 立即，entry 延迟) |
-| `elib_fsm_cb_poll(ctx, period_ms, event_data)` | 推进一个 tick，返回当前状态；无延迟时先调用 event 回调再调用 run 回调；延迟等待中跳过 event 和 run，返回 -1；到期时执行 entry，再调用新状态的 event 和 run |
-| `elib_fsm_cb_dispatch(ctx, event_data)` | 按需投递事件，仅调用当前状态的 event 回调（不触发 run）；延迟等待中跳过；可在一个 tick 内多次调用 |
+| `elib_fsm_cb_goto(ctx, target, delay_ms)` | 跳转状态，delay=0 立即跳转(exit→entry)，delay>0 延迟跳转(exit 立即，entry 延迟)；`target` 不在描述符表中时返回 `ELIB_FSM_ERR_STATE_NOT_FOUND`（不触发任何回调、状态不变） |
+| `elib_fsm_cb_poll(ctx, period_ms, event_data)` | 推进一个 tick，返回当前状态；无延迟时先调用 event 回调再调用 run 回调；延迟等待中事件交给 `transition_event`（未配置则丢弃）、跳过 event 和 run，返回 -1；到期时执行 entry，再调用新状态的 event 和 run。`event_data` 为 NULL 时视为"无事件"，不调用任何事件回调（run 照常）。`period_ms` 需 > 0 才能推进延迟；0 表示零时间流逝，延迟不推进 |
+| `elib_fsm_cb_dispatch(ctx, event_data)` | 按需投递事件，仅调用当前状态的 event 回调（不触发 run）；延迟等待中事件交给 `transition_event`（未配置则丢弃）；`event_data` 为 NULL 时不调用任何事件回调；可在一个 tick 内多次调用 |
 | `elib_fsm_cb_current(ctx)` | 获取当前状态 |
-| `elib_fsm_cb_previous(ctx)` | 获取上一个有效状态（延迟跳转期间不返回 INVALID） |
+| `elib_fsm_cb_previous(ctx)` | 获取上一个有效状态（延迟跳转期间返回延迟的源状态，不返回 INVALID） |
+
+**临界状态事件回调 (`transition_event`)：**
+
+延迟跳转挂起期间（源状态已 `exit`、目标状态尚未 `entry`），状态机没有活动状态，`poll`/`dispatch` 收到的事件无法交给当前状态处理。若 `init` 时提供了 `transition_event`，这些事件会转交给它，避免被静默丢弃：
+
+| 参数 | 说明 |
+|------|------|
+| `event_data` | 事件数据指针 |
+| `from` | 已退出的源状态 |
+| `to` | 待进入的目标状态（`delayed_target`） |
+| `remaining_ms` | 距到期剩余毫秒（扣除本 tick 周期之前的值） |
+| `user_data` | 用户数据 |
+
+为 NULL 时，临界期事件直接丢弃（保持旧行为）。到期那一拍不属于临界状态：会执行目标状态的 `entry`，再调用目标状态的 `event`、`run`。
+
+**`event_data` 为 NULL**：表示"本次无事件"，无论正常 tick、临界窗口还是 `dispatch`，都不会调用任何事件回调（状态 `event` 与 `transition_event` 均跳过）；`run` 回调照常执行。
 
 ### 层次状态机
 
@@ -456,7 +474,7 @@ while (1) {
 |------|------|
 | `elib_fsm_hsm_init(ctx, states, state_count, initial, user_data)` | 初始化，沿 initial 链下降到叶子状态，调用路径上所有 entry 回调 |
 | `elib_fsm_hsm_deinit(ctx)` | 反初始化 |
-| `elib_fsm_hsm_goto(ctx, target)` | 跳转状态（LCA 语义），exit 从叶子到 LCA，entry 从 LCA 到目标，composite 状态沿 initial 链下降 |
+| `elib_fsm_hsm_goto(ctx, target)` | 外部跳转：跳转域 = 源叶子与目标的最近公共**严格**祖先；域之下的路径先 exit，再 entry 到目标（目标为祖先或自身时同样 exit/entry），composite 状态沿 initial 链下降到叶子。目标为顶层状态时域为空，等价于整机退出再重入 |
 | `elib_fsm_hsm_poll(ctx)` | 推进一个 tick，调用叶子状态 run 回调，返回当前叶子状态 |
 | `elib_fsm_hsm_dispatch(ctx, event_data)` | 投递事件（`void *`），从叶子状态沿活跃路径冒泡，返回是否被处理 |
 | `elib_fsm_hsm_current(ctx)` | 获取当前叶子状态 |
@@ -489,8 +507,8 @@ while (1) {
 |------|------|
 | `elib_fsm_hsm_hist_init(ctx, states, state_count, initial, user_data)` | 初始化，自动将所有 `last_active = initial`，沿 initial 链下降到叶子 |
 | `elib_fsm_hsm_hist_deinit(ctx)` | 反初始化 |
-| `elib_fsm_hsm_hist_goto(ctx, target)` | 跳转状态，使用 `last_active` 链找到目标叶子（恢复历史），无历史时走 initial 链 |
-| `elib_fsm_hsm_hist_reset(ctx)` | 重置：恢复所有 `last_active = initial`，回到初始叶子 |
+| `elib_fsm_hsm_hist_goto(ctx, target)` | 外部跳转（严格 LCA 域，同标准 HSM）；使用 `last_active` 链找到目标叶子（恢复历史），无历史时走 initial 链；跳到祖先或自身同样 exit/entry 该状态 |
+| `elib_fsm_hsm_hist_reset(ctx, target)` | 重置：清空所有 `last_active`（恢复为 `initial`），进入 `target` 的干净初始配置（沿 initial 链下降到叶子）；传机器初始/顶层状态即"回到初始"。`target` 之上、跳转域之外的祖先会同步更新 `last_active`。已在目标叶子则不触发 exit/entry；`target` 不存在返回 `ELIB_FSM_ERR_STATE_NOT_FOUND` |
 | `elib_fsm_hsm_hist_poll(ctx)` | 推进一个 tick，调用叶子状态 run 回调 |
 | `elib_fsm_hsm_hist_dispatch(ctx, event_data)` | 投递事件（`void *`），从叶子状态沿活跃路径冒泡 |
 | `elib_fsm_hsm_hist_current(ctx)` | 获取当前叶子状态 |
@@ -501,7 +519,7 @@ while (1) {
 |------|---------------|---------------------|
 | **状态描述符** | 7 字段（const，可放 Flash） | 8 字段（非 const，含 `last_active`，只能放 RAM） |
 | **goto 行为** | 始终沿 initial 链下降到叶子 | 优先恢复 `last_active`（历史），无历史走 initial 链 |
-| **reset** | 无 | 恢复所有 `last_active = initial` |
+| **reset** | 无 | 清空所有 `last_active`，进入用户指定的 `target`（下游沿 initial 链） |
 | **`initial` 字段** | 复合状态必须有效 | 复合状态必须有效 |
 | **`last_active` 字段** | 无 | 框架自动管理，用户不应修改 |
 | **适用场景** | 简单层次结构，每次进入都从初始状态开始 | 需要记住离开时的位置，恢复上下文 |
@@ -523,6 +541,18 @@ while (1) {
 - 使用 `elib_fsm_hsm`：状态机每次进入复合状态都从固定初始状态开始（如通信协议、简单 UI）
 - 使用 `elib_fsm_hsm_hist`：需要记住离开时的位置，返回时恢复（如复杂 UI 页面、多任务上下文）
 
+### 使用约束（禁止环）
+
+`parent` / `initial`（带历史版还有运行时的 `last_active`）三条链**必须构成合法的层次结构（无环树/森林）**：
+
+- 沿 `parent` 一定能走到顶层（`parent == INVALID`）；
+- 沿 `initial` 一定能走到叶子（`initial == INVALID`）；
+- **禁止任何形式的环**：状态不得（直接或间接）成为自身的祖先。
+
+> 环属于 **未定义行为**：会让库内部遍历 **死循环**；带历史版还会因递归下降 **栈溢出崩溃**。库**不做运行时环检测**，请在定义状态表时自行保证。
+
+**层次深度**：默认上限 `ELIB_FSM_HSM_MAX_DEPTH`（16）。超过上限时路径会被**静默截断**（靠近根的 `entry` 回调被跳过），不会报错。需要更深的层次时，**不要修改库文件**，改用编译期宏覆盖（见下节「编译」）。
+
 ## 编译
 
 ```bash
@@ -539,7 +569,36 @@ gcc -c elib-state-machine/src/elib_fsm_hsm_core.c -I elib-state-machine/include
 gcc -c elib-state-machine/src/elib_fsm_hsm_hist_core.c -I elib-state-machine/include
 ```
 
+**自定义最大层次深度**：通过编译期宏覆盖（**不要修改库文件**）：
+
+```bash
+gcc -DELIB_FSM_HSM_MAX_DEPTH=32 -c elib-state-machine/src/elib_fsm_hsm_core.c -I elib-state-machine/include
+gcc -DELIB_FSM_HSM_MAX_DEPTH=32 -c elib-state-machine/src/elib_fsm_hsm_hist_core.c -I elib-state-machine/include
+```
+
+未定义时使用内部默认值 `16`。**库与使用方需使用同一份定义**，避免不一致。
+
 ## 测试
+
+### 使用 CMake（推荐）
+
+仓库自带 `CMakeLists.txt`，一条命令即可构建全部 4 套测试并运行：
+
+```bash
+cmake -S . -B build
+cmake --build build --config Debug
+ctest --test-dir build -C Debug --output-on-failure
+```
+
+自定义最大层次深度（等价于编译期宏覆盖）：
+
+```bash
+cmake -S . -B build -DELIB_FSM_HSM_MAX_DEPTH=32
+```
+
+CI（`.github/workflows/ci.yml`）会在 Linux/Windows × MAX_DEPTH(16/32) 上自动构建并跑全部测试。
+
+### 手动用 gcc
 
 ```bash
 gcc -o test_elib_fsm elib-state-machine/test/test_elib_fsm.c \

@@ -31,7 +31,11 @@ elib_fsm_err_t elib_fsm_hsm_init(elib_fsm_hsm_ctx_t *ctx,
 void elib_fsm_hsm_deinit(elib_fsm_hsm_ctx_t *ctx);
 
 /**
- * @brief Transition to target state (LCA semantics, no delay)
+ * @brief Transition to target state (external transition, strict-LCA domain)
+ *        The transition domain is the lowest strict ancestor of both the
+ *        current leaf and target; everything below it (including target when
+ *        target is an ancestor or the current state itself) is exited and
+ *        re-entered, then a composite target descends its initial chain.
  * @param ctx Context pointer
  * @param target Target state value
  * @return elib_fsm_err_t error code
@@ -48,6 +52,8 @@ elib_fsm_state_t elib_fsm_hsm_poll(elib_fsm_hsm_ctx_t *ctx);
 
 /**
  * @brief Dispatch event: bubble up active path, return true if handled
+ *        A null event_data means "no event" and returns false without calling
+ *        any handler.
  * @param ctx Context pointer
  * @param event_data Event data pointer (user-defined type, passed to handler)
  * @return true if event was handled by any state, false otherwise

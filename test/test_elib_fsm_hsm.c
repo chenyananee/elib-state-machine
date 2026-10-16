@@ -293,17 +293,19 @@ static void test_goto_cross_branch(void) {
 }
 
 static void test_goto_to_ancestor(void) {
-    printf("Test: goto ancestor state (S1 -> A)... ");
+    printf("Test: goto ancestor state (S1 -> A) is an external transition... ");
     reset_test();
     elib_fsm_hsm_init(&test_ctx, test_states, TEST_STATE_COUNT, ST_ROOT, NULL);
     reset_callback_state();
 
+    /* Strict-LCA: domain is A's parent (ROOT), so A itself is exited and
+     * re-entered; the target then descends its initial chain back to S1. */
     elib_fsm_err_t err = elib_fsm_hsm_goto(&test_ctx, ST_A);
     assert(err == ELIB_FSM_OK);
     assert(elib_fsm_hsm_current(&test_ctx) == ST_S1);
-    assert(exit_count == 1);
-    assert(last_exit_state == ST_S1);
-    assert(entry_count == 1);
+    assert(exit_count == 2);
+    assert(last_exit_state == ST_A);
+    assert(entry_count == 2);
     assert(last_entry_state == ST_S1);
 
     printf("PASSED\n");

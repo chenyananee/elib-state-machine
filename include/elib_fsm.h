@@ -38,7 +38,9 @@ elib_fsm_err_t elib_fsm_goto(elib_fsm_ctx_t *ctx,
 /**
  * @brief Advance one tick period and get current state
  * @param ctx Context pointer
- * @param period_ms Tick period in milliseconds
+ * @param period_ms Tick period in milliseconds; must be > 0 to advance a
+ *                  pending delayed transition (0 = no time elapses, so the
+ *                  delay will not progress)
  * @return Current state, or ELIB_FSM_STATE_INVALID if delay pending / error
  */
 elib_fsm_state_t elib_fsm_poll(elib_fsm_ctx_t *ctx, uint32_t period_ms);
@@ -51,7 +53,9 @@ elib_fsm_state_t elib_fsm_poll(elib_fsm_ctx_t *ctx, uint32_t period_ms);
 elib_fsm_state_t elib_fsm_current(const elib_fsm_ctx_t *ctx);
 
 /**
- * @brief Get last valid state (never returns ELIB_FSM_STATE_INVALID during delay)
+ * @brief Get last valid state (the state being left)
+ *        Never returns ELIB_FSM_STATE_INVALID during a pending delay: while
+ *        current() reports INVALID, previous() still returns the source state.
  * @param ctx Context pointer
  * @return Last valid state, or ELIB_FSM_STATE_INVALID if ctx is NULL/uninitialized
  */

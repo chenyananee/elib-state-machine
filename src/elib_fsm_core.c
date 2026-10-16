@@ -45,6 +45,7 @@ elib_fsm_err_t elib_fsm_goto(elib_fsm_ctx_t *ctx,
         ctx->delayed_target = ELIB_FSM_STATE_INVALID;
         ctx->delayed_remaining = 0;
     } else {
+        ctx->previous = ctx->current;
         ctx->delayed_target = target;
         ctx->delayed_remaining = delay_ms;
     }

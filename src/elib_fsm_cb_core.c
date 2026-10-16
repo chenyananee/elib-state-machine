@@ -20,9 +20,15 @@ elib_fsm_err_t elib_fsm_cb_init(elib_fsm_cb_ctx_t *ctx,
                                  const elib_fsm_cb_state_desc_t *states,
                                  size_t state_count,
                                  elib_fsm_state_t initial,
-                                 void *user_data) {
+                                 void *user_data,
+                                 elib_fsm_cb_transition_event_fn transition_event) {
     if (ctx == NULL || states == NULL || state_count == 0) {
         return ELIB_FSM_ERR_INVALID_PARAM;
+    }
+
+    /* Validate initial state exists */
+    if (elib_fsm_cb_find_state(states, state_count, initial) == NULL) {
+        return ELIB_FSM_ERR_STATE_NOT_FOUND;
     }
 
     memset(ctx, 0, sizeof(elib_fsm_cb_ctx_t));
@@ -33,6 +39,7 @@ elib_fsm_err_t elib_fsm_cb_init(elib_fsm_cb_ctx_t *ctx,
     ctx->previous = initial;
     ctx->delayed_target = ELIB_FSM_STATE_INVALID;
     ctx->user_data = user_data;
+    ctx->transition_event = transition_event;
     ctx->bit_flags.initialized = 1;
 
     /* Call entry callback of initial state */
@@ -62,6 +69,11 @@ elib_fsm_err_t elib_fsm_cb_goto(elib_fsm_cb_ctx_t *ctx,
     }
     if (!ctx->bit_flags.initialized) {
         return ELIB_FSM_ERR_NOT_INITIALIZED;
+    }
+
+    /* Validate target state exists */
+    if (elib_fsm_cb_find_state(ctx->states, ctx->state_count, target) == NULL) {
+        return ELIB_FSM_ERR_STATE_NOT_FOUND;
     }
 
     if (delay_ms == 0) {
@@ -95,6 +107,7 @@ elib_fsm_err_t elib_fsm_cb_goto(elib_fsm_cb_ctx_t *ctx,
                 src_desc->exit(ctx->current, ctx->user_data);
             }
         }
+        ctx->previous = ctx->current;
         ctx->delayed_target = target;
         ctx->delayed_remaining = delay_ms;
     }
@@ -124,23 +137,30 @@ elib_fsm_state_t elib_fsm_cb_poll(elib_fsm_cb_ctx_t *ctx, uint32_t period_ms,
                 desc->entry(ctx->current, ctx->user_data);
             }
         } else {
+            /* Still pending (critical state): deliver the event to the
+             * transition callback, then advance the countdown. Event and run
+             * callbacks of the (exited) source state are skipped. A null
+             * event_data means "no event this tick" and skips the callback. */
+            if (ctx->transition_event != NULL && event_data != NULL) {
+                ctx->transition_event(event_data, ctx->current,
+                                      ctx->delayed_target,
+                                      ctx->delayed_remaining, ctx->user_data);
+            }
             ctx->delayed_remaining -= period_ms;
             return ELIB_FSM_STATE_INVALID;
         }
-    } else {
-        /* No pending delay — call event and run callbacks */
-        const elib_fsm_cb_state_desc_t *curr_desc = elib_fsm_cb_find_state(
-            ctx->states, ctx->state_count, ctx->current);
-        if (curr_desc != NULL && curr_desc->event != NULL) {
-            curr_desc->event(event_data, ctx->user_data);
-        }
     }
 
-    /* Call run callback of current state */
-    const elib_fsm_cb_state_desc_t *run_desc = elib_fsm_cb_find_state(
+    /* Normal tick, or the tick the delayed transition arrived on: call the
+     * current state's event callback (only when event_data is non-null), then
+     * its run callback. */
+    const elib_fsm_cb_state_desc_t *curr_desc = elib_fsm_cb_find_state(
         ctx->states, ctx->state_count, ctx->current);
-    if (run_desc != NULL && run_desc->run != NULL) {
-        run_desc->run(ctx->user_data);
+    if (curr_desc != NULL && curr_desc->event != NULL && event_data != NULL) {
+        curr_desc->event(event_data, ctx->user_data);
+    }
+    if (curr_desc != NULL && curr_desc->run != NULL) {
+        curr_desc->run(ctx->user_data);
     }
 
     return ctx->current;
@@ -155,8 +175,20 @@ elib_fsm_err_t elib_fsm_cb_dispatch(elib_fsm_cb_ctx_t *ctx, void *event_data) {
         return ELIB_FSM_ERR_NOT_INITIALIZED;
     }
 
-    /* Skip event dispatch during delayed transition */
+    /* A null event_data means "no event" and is dropped without invoking any
+     * event callback. */
+    if (event_data == NULL) {
+        return ELIB_FSM_OK;
+    }
+
+    /* During a pending delayed transition (critical state) route the event to
+     * the transition callback when provided; otherwise it is dropped. */
     if (ctx->delayed_target != ELIB_FSM_STATE_INVALID) {
+        if (ctx->transition_event != NULL) {
+            ctx->transition_event(event_data, ctx->current,
+                                  ctx->delayed_target,
+                                  ctx->delayed_remaining, ctx->user_data);
+        }
         return ELIB_FSM_OK;
     }
 
