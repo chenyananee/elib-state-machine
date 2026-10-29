@@ -1,10 +1,13 @@
-/* elib_fsm_core.c - Switch/Case State Machine Core Implementation */
-#include "elib_fsm_core.h"
+/* elib_fsm_core.c - Switch/Case State Machine Core Implementation
+ *
+ * Minimal state tracker: no table, no callbacks, immediate or delayed
+ * goto. The user's main loop drives poll() and switches on the state.
+ * A pending delayed transition makes current() report INVALID while
+ * previous() keeps serving the last valid state. */
+#include "elib_fsm.h"
 #include <string.h>
 
-/* Initialize switch/case state machine */
-elib_fsm_err_t elib_fsm_init(elib_fsm_ctx_t *ctx,
-                              elib_fsm_state_t initial) {
+elib_fsm_err_t elib_fsm_init(elib_fsm_ctx_t *ctx, elib_fsm_state_t initial) {
     if (ctx == NULL) {
         return ELIB_FSM_ERR_INVALID_PARAM;
     }
@@ -20,7 +23,6 @@ elib_fsm_err_t elib_fsm_init(elib_fsm_ctx_t *ctx,
     return ELIB_FSM_OK;
 }
 
-/* Deinitialize state machine */
 void elib_fsm_deinit(elib_fsm_ctx_t *ctx) {
     if (ctx == NULL) {
         return;
@@ -28,7 +30,6 @@ void elib_fsm_deinit(elib_fsm_ctx_t *ctx) {
     ctx->bit_flags.initialized = 0;
 }
 
-/* Jump to target state, immediate or delayed */
 elib_fsm_err_t elib_fsm_goto(elib_fsm_ctx_t *ctx,
                               elib_fsm_state_t target,
                               uint32_t delay_ms) {
@@ -53,7 +54,6 @@ elib_fsm_err_t elib_fsm_goto(elib_fsm_ctx_t *ctx,
     return ELIB_FSM_OK;
 }
 
-/* Advance one tick and return current state */
 elib_fsm_state_t elib_fsm_poll(elib_fsm_ctx_t *ctx, uint32_t period_ms) {
     if (ctx == NULL || !ctx->bit_flags.initialized) {
         return ELIB_FSM_STATE_INVALID;
@@ -63,6 +63,7 @@ elib_fsm_state_t elib_fsm_poll(elib_fsm_ctx_t *ctx, uint32_t period_ms) {
         return ctx->current;
     }
 
+    /* period 0 = no time passes: never fires, never rewinds */
     if (ctx->delayed_remaining <= period_ms) {
         ctx->previous = ctx->current;
         ctx->current = ctx->delayed_target;
@@ -71,11 +72,12 @@ elib_fsm_state_t elib_fsm_poll(elib_fsm_ctx_t *ctx, uint32_t period_ms) {
         return ctx->current;
     }
 
-    ctx->delayed_remaining -= period_ms;
+    if (period_ms > 0u) {
+        ctx->delayed_remaining -= period_ms;
+    }
     return ELIB_FSM_STATE_INVALID;
 }
 
-/* Get current state */
 elib_fsm_state_t elib_fsm_current(const elib_fsm_ctx_t *ctx) {
     if (ctx == NULL || !ctx->bit_flags.initialized) {
         return ELIB_FSM_STATE_INVALID;
