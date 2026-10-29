@@ -1,8 +1,13 @@
-/* test_elib_fsm.c - Switch/Case State Machine Unit Tests */
+/* test_elib_fsm.c - Switch/Case State Machine Unit Tests (v2)
+ *
+ * Ported from v1 plus v2 additions: the period_ms = 0 poll semantics
+ * ("no time passes, delay never advances, call is legal") are now
+ * contract, not accident.
+ */
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
-#include "../include/elib_fsm.h"
+#include "elib_fsm.h"
 
 /* Test states */
 #define STATE_IDLE    0
@@ -160,6 +165,39 @@ static void test_delayed_replaces_previous(void) {
     printf("PASSED\n");
 }
 
+/* v2: poll(0) is a legal "zero time passed" tick -- the delay must
+ * never advance and never fire, no matter how many times called. */
+static void test_poll_zero_period(void) {
+    printf("Test: poll(0) passes zero time, delay frozen... ");
+    reset_test();
+
+    elib_fsm_goto(&test_ctx, STATE_ACTIVE, 10);
+
+    for (int i = 0; i < 100; i++) {
+        assert(elib_fsm_poll(&test_ctx, 0) == ELIB_FSM_STATE_INVALID);
+        assert(test_ctx.delayed_remaining == 10);   /* never touched */
+    }
+    assert(elib_fsm_current(&test_ctx) == ELIB_FSM_STATE_INVALID);
+
+    /* a real tick still lands normally afterwards */
+    assert(elib_fsm_poll(&test_ctx, 10) == STATE_ACTIVE);
+
+    /* zero-time polls on an idle (non-delayed) machine are harmless */
+    assert(elib_fsm_poll(&test_ctx, 0) == STATE_ACTIVE);
+
+    printf("PASSED\n");
+}
+
+static void test_delay_huge_period_fires(void) {
+    printf("Test: period larger than remaining fires immediately... ");
+    reset_test();
+
+    elib_fsm_goto(&test_ctx, STATE_ACTIVE, 5);
+    assert(elib_fsm_poll(&test_ctx, 1000) == STATE_ACTIVE);
+
+    printf("PASSED\n");
+}
+
 static void test_poll_null_ctx(void) {
     printf("Test: poll with null ctx... ");
     assert(elib_fsm_poll(NULL, 10) == ELIB_FSM_STATE_INVALID);
@@ -264,6 +302,28 @@ static void test_previous_during_delay(void) {
     printf("PASSED\n");
 }
 
+/* v2 documented abort idiom: no cancel API -- goto(previous, 0). */
+static void test_abort_pending_delay_via_previous(void) {
+    printf("Test: pending delay aborted via goto(previous, 0)... ");
+    reset_test();
+
+    /* ACTIVE -> ERROR delayed (ACTIVE was reached immediately first) */
+    elib_fsm_goto(&test_ctx, STATE_ACTIVE, 0);
+    elib_fsm_goto(&test_ctx, STATE_ERROR, 100);
+    assert(elib_fsm_current(&test_ctx) == ELIB_FSM_STATE_INVALID);
+    assert(elib_fsm_previous(&test_ctx) == STATE_ACTIVE);
+
+    /* abort: re-enter the remembered previous state immediately */
+    assert(elib_fsm_goto(&test_ctx, elib_fsm_previous(&test_ctx), 0)
+           == ELIB_FSM_OK);
+    assert(test_ctx.delayed_target == ELIB_FSM_STATE_INVALID);
+    assert(elib_fsm_current(&test_ctx) == STATE_ACTIVE);
+    /* no phantom fire later */
+    assert(elib_fsm_poll(&test_ctx, 10) == STATE_ACTIVE);
+
+    printf("PASSED\n");
+}
+
 static void test_previous_null_ctx(void) {
     printf("Test: previous with null ctx... ");
     assert(elib_fsm_previous(NULL) == ELIB_FSM_STATE_INVALID);
@@ -284,6 +344,8 @@ int main(void) {
     test_delayed_exact_period();
     test_delayed_not_aligned();
     test_delayed_replaces_previous();
+    test_poll_zero_period();
+    test_delay_huge_period_fires();
     test_poll_null_ctx();
     test_current();
     test_current_null_ctx();
@@ -291,6 +353,7 @@ int main(void) {
     test_current_during_delay();
     test_previous();
     test_previous_during_delay();
+    test_abort_pending_delay_via_previous();
     test_previous_null_ctx();
 
     printf("\n=== All tests passed ===\n");

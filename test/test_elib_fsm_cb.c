@@ -1,8 +1,15 @@
-/* test_elib_fsm_cb.c - Callback State Machine Unit Tests */
+/* test_elib_fsm_cb.c - Callback State Machine Unit Tests (v2)
+ *
+ * Ported from v1 plus v2 additions:
+ *  - init-time table validation: duplicate state values, the reserved
+ *    INVALID value rejected; rejection leaves ctx and callbacks clean
+ *  - entry callbacks may goto inside init (initialized flag is up)
+ *  - poll(0) contract: delay frozen, critical-state events still relayed
+ */
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
-#include "../include/elib_fsm_cb.h"
+#include "elib_fsm.h"
 
 /* Test states */
 #define STATE_IDLE    0
@@ -79,6 +86,18 @@ static void on_event(void *event_data, void *user_data) {
     log_call('E');
 }
 
+/* Entry that relocates the machine on init (v2 re-entry contract) */
+static elib_fsm_cb_ctx_t *reentry_ctx;
+static elib_fsm_state_t reentry_target;
+
+static void on_entry_relocate(elib_fsm_state_t state, void *user_data) {
+    (void)state;
+    (void)user_data;
+    if (reentry_ctx != NULL) {
+        elib_fsm_cb_goto(reentry_ctx, reentry_target, 0);
+    }
+}
+
 /* Transition (critical state) event callback */
 static void on_transition_event(void *event_data, elib_fsm_state_t from,
                                 elib_fsm_state_t to, uint32_t remaining_ms,
@@ -133,6 +152,91 @@ static void test_init_null_ctx(void) {
     elib_fsm_err_t err = elib_fsm_cb_init(NULL, test_states, TEST_STATE_COUNT,
                                            STATE_IDLE, NULL, NULL);
     assert(err == ELIB_FSM_ERR_INVALID_PARAM);
+    printf("PASSED\n");
+}
+
+/* v2: table validation gates at init */
+
+static void test_init_duplicate_state_rejected(void) {
+    printf("Test: init rejects duplicate state values... ");
+    static const elib_fsm_cb_state_desc_t dup_states[] = {
+        { STATE_IDLE,   on_entry, on_exit, NULL, NULL },
+        { STATE_ACTIVE, on_entry, on_exit, NULL, NULL },
+        { STATE_IDLE,   on_entry, on_exit, NULL, NULL },   /* duplicate */
+    };
+    elib_fsm_cb_ctx_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    reset_callback_state();
+
+    assert(elib_fsm_cb_init(&ctx, dup_states, 3, STATE_ACTIVE, NULL, NULL)
+           == ELIB_FSM_ERR_INVALID_PARAM);
+    assert(ctx.bit_flags.initialized == 0);
+    assert(entry_count == 0);   /* no callback ever fired */
+
+    printf("PASSED\n");
+}
+
+static void test_init_invalid_value_rejected(void) {
+    printf("Test: init rejects ELIB_FSM_STATE_INVALID as a state value... ");
+    static const elib_fsm_cb_state_desc_t bad_states[] = {
+        { STATE_IDLE,               on_entry, on_exit, NULL, NULL },
+        { ELIB_FSM_STATE_INVALID,   on_entry, on_exit, NULL, NULL },
+    };
+    elib_fsm_cb_ctx_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    reset_callback_state();
+
+    assert(elib_fsm_cb_init(&ctx, bad_states, 2, STATE_IDLE, NULL, NULL)
+           == ELIB_FSM_ERR_INVALID_PARAM);
+    assert(ctx.bit_flags.initialized == 0);
+    assert(entry_count == 0);
+
+    printf("PASSED\n");
+}
+
+static void test_init_state_not_found(void) {
+    printf("Test: init with initial state not in table... ");
+    memset(&test_ctx, 0, sizeof(test_ctx));
+    reset_callback_state();
+
+    elib_fsm_err_t err = elib_fsm_cb_init(&test_ctx, test_states, TEST_STATE_COUNT,
+                                           99, NULL, NULL);
+    assert(err == ELIB_FSM_ERR_STATE_NOT_FOUND);
+    assert(test_ctx.bit_flags.initialized == 0);
+    assert(entry_count == 0);
+
+    printf("PASSED\n");
+}
+
+/* v2: the initial state's entry may relocate the machine; the goto
+ * fires INSIDE init (initialized flag is already up). */
+static void test_init_entry_goto_reentry(void) {
+    printf("Test: entry callback performs goto inside init... ");
+    elib_fsm_cb_ctx_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    reset_callback_state();
+
+    reentry_ctx = &ctx;
+    reentry_target = STATE_ACTIVE;
+
+    {
+        static const elib_fsm_cb_state_desc_t rel_states[] = {
+            { STATE_IDLE,   on_entry_relocate, on_exit, on_run, on_event },
+            { STATE_ACTIVE, on_entry,          on_exit, on_run, on_event },
+        };
+        elib_fsm_err_t err = elib_fsm_cb_init(&ctx, rel_states, 2,
+                                               STATE_IDLE, NULL, NULL);
+        assert(err == ELIB_FSM_OK);
+
+        /* entry(IDLE) ran, its goto fired exit(IDLE) + entry(ACTIVE) */
+        assert(elib_fsm_cb_current(&ctx) == STATE_ACTIVE);
+        assert(entry_count == 2);           /* IDLE relocated, then ACTIVE */
+        assert(last_entry_state == STATE_ACTIVE);
+        assert(exit_count == 1);
+        assert(last_exit_state == STATE_IDLE);
+    }
+
+    reentry_ctx = NULL;
     printf("PASSED\n");
 }
 
@@ -273,15 +377,15 @@ static void test_delayed_not_aligned(void) {
     elib_fsm_cb_goto(&test_ctx, STATE_ACTIVE, 25);
     assert(exit_count == 1);
 
-    /* remaining=25, period=10: 25>10, not expired, remaining=15 */
+    /* remaining=25, period=10: not expired -> remaining=15 */
     assert(elib_fsm_cb_poll(&test_ctx, 10, NULL) == ELIB_FSM_STATE_INVALID);
     assert(entry_count == 0);
 
-    /* remaining=15, period=10: 15>10, not expired, remaining=5 */
+    /* remaining=15, period=10: not expired -> remaining=5 */
     assert(elib_fsm_cb_poll(&test_ctx, 10, NULL) == ELIB_FSM_STATE_INVALID);
     assert(entry_count == 0);
 
-    /* remaining=5, period=10: 5<=10, expired */
+    /* remaining=5, period=10: expired */
     assert(elib_fsm_cb_poll(&test_ctx, 10, NULL) == STATE_ACTIVE);
     assert(entry_count == 1);
 
@@ -297,7 +401,7 @@ static void test_delayed_replaces_previous(void) {
     assert(exit_count == 1);
     assert(last_exit_state == STATE_IDLE);
 
-    /* Replace with new delayed target — no exit should fire */
+    /* Replace with new delayed target -- no exit should fire */
     elib_fsm_cb_goto(&test_ctx, STATE_ERROR, 20);
     assert(exit_count == 1);  /* no additional exit */
 
@@ -443,6 +547,30 @@ static void test_event_null_skipped(void) {
     printf("PASSED\n");
 }
 
+/* v2 contract: poll(0) during a critical window relays the event but
+ * never advances (never fires) the delay. */
+static void test_zero_period_poll_in_delay(void) {
+    printf("Test: poll(0) inside critical window relays but freezes... ");
+    elib_fsm_cb_ctx_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    elib_fsm_cb_init(&ctx, test_states, TEST_STATE_COUNT, STATE_IDLE, NULL,
+                     on_transition_event);
+    reset_callback_state();
+
+    int evt = 1;
+    elib_fsm_cb_goto(&ctx, STATE_ACTIVE, 50);
+
+    for (int i = 0; i < 10; i++) {
+        assert(elib_fsm_cb_poll(&ctx, 0, &evt) == ELIB_FSM_STATE_INVALID);
+    }
+    assert(trans_count == 10);           /* events still relayed */
+    assert(last_trans_remaining == 50);  /* countdown untouched */
+    assert(ctx.delayed_remaining == 50);
+    assert(entry_count == 0);            /* never landed */
+
+    printf("PASSED\n");
+}
+
 /* --- Poll null/edge tests --- */
 
 static void test_poll_null_ctx(void) {
@@ -538,20 +666,6 @@ static void test_previous_null_ctx(void) {
 }
 
 /* --- State validation tests --- */
-
-static void test_init_invalid_initial(void) {
-    printf("Test: init with initial state not in table... ");
-    memset(&test_ctx, 0, sizeof(test_ctx));
-    reset_callback_state();
-
-    elib_fsm_err_t err = elib_fsm_cb_init(&test_ctx, test_states, TEST_STATE_COUNT,
-                                           99, NULL, NULL);
-    assert(err == ELIB_FSM_ERR_STATE_NOT_FOUND);
-    assert(test_ctx.bit_flags.initialized == 0);
-    assert(entry_count == 0);
-
-    printf("PASSED\n");
-}
 
 static void test_goto_invalid_target(void) {
     printf("Test: goto to state not in table is rejected... ");
@@ -845,6 +959,10 @@ int main(void) {
 
     test_init_valid();
     test_init_null_ctx();
+    test_init_duplicate_state_rejected();
+    test_init_invalid_value_rejected();
+    test_init_state_not_found();
+    test_init_entry_goto_reentry();
     test_deinit_null();
     test_uninitialized_context();
     test_goto_immediate();
@@ -862,20 +980,12 @@ int main(void) {
     test_event_called_before_run();
     test_event_during_delay();
     test_event_null_skipped();
-    test_transition_event_poll_during_delay();
-    test_transition_event_remaining_decrements();
-    test_transition_event_dispatch_during_delay();
-    test_transition_event_null_drops();
-    test_transition_event_not_called_on_expiry();
-    test_transition_event_null_event_data_skipped();
-    test_poll_null_event_skips_event();
-    test_expiry_null_event_skips_event();
+    test_zero_period_poll_in_delay();
     test_poll_null_ctx();
     test_delayed_immediate_during_delay();
     test_previous();
     test_previous_during_delay();
     test_previous_null_ctx();
-    test_init_invalid_initial();
     test_goto_invalid_target();
     test_dispatch_calls_event();
     test_dispatch_null_event_data();
@@ -885,6 +995,14 @@ int main(void) {
     test_dispatch_uninitialized();
     test_dispatch_null_event_callback();
     test_dispatch_multiple_times();
+    test_transition_event_poll_during_delay();
+    test_transition_event_remaining_decrements();
+    test_transition_event_dispatch_during_delay();
+    test_transition_event_null_drops();
+    test_transition_event_not_called_on_expiry();
+    test_transition_event_null_event_data_skipped();
+    test_poll_null_event_skips_event();
+    test_expiry_null_event_skips_event();
 
     printf("\n=== All tests passed ===\n");
     return 0;
