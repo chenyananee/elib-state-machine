@@ -1,3 +1,5 @@
+**简体中文** | [English](README.en.md)
+
 # elib-state-machine
 
 嵌入式状态机框架，四种独立模式，单公共头。
